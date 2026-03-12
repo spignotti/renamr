@@ -1,4 +1,5 @@
 import shutil
+import tomllib
 from pathlib import Path
 
 import nox
@@ -6,9 +7,24 @@ import nox
 nox.options.sessions = ["lint", "typecheck", "test"]
 nox.options.stop_on_first_error = False
 
+PROJECT_NAME = tomllib.loads(Path("pyproject.toml").read_text())["project"]["name"]
+
+
+def sync_project(session: nox.Session) -> None:
+    """Sync dependencies and reinstall the local package."""
+    session.run(
+        "uv",
+        "sync",
+        "--all-groups",
+        "--reinstall-package",
+        PROJECT_NAME,
+        external=True,
+    )
+
 
 def run_uv(session: nox.Session, *args: str) -> None:
     """Run a uv command from within a nox session."""
+    sync_project(session)
     session.run("uv", *args, external=True)
 
 
