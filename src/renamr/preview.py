@@ -85,6 +85,31 @@ def is_image_file(filepath: Path) -> bool:
     return filepath.suffix.lower() in IMAGE_EXTENSIONS
 
 
+def compress_pdf(src: Path, dest: Path, dpi: int = 150, jpeg_quality: int = 80) -> bool:
+    """Re-render a PDF to JPEG-backed pages and keep it only if smaller."""
+    try:
+        document = fitz.open(str(src))
+        output = fitz.open()
+        for page in document:
+            pixmap = page.get_pixmap(dpi=dpi)
+            image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=jpeg_quality)
+            rect = fitz.Rect(0, 0, page.rect.width, page.rect.height)
+            new_page = output.new_page(width=rect.width, height=rect.height)
+            new_page.insert_image(rect, stream=buffer.getvalue())
+        output.save(str(dest), deflate=True)
+        output.close()
+        document.close()
+    except Exception as exc:
+        logger.warning("pdf_compress_failed", path=str(src), error=str(exc))
+        return False
+    if dest.stat().st_size >= src.stat().st_size:
+        dest.unlink(missing_ok=True)
+        return False
+    return True
+
+
 def _to_rgb(image: Image.Image) -> Image.Image:
     """Convert a Pillow image into RGB with alpha flattened to white."""
     if image.mode in {"RGBA", "LA"}:
