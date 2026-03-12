@@ -20,6 +20,16 @@ def test_version_command_outputs_version() -> None:
     assert "0.1.0" in result.stdout
 
 
+def test_init_creates_config_from_package_data(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["init"])
+
+    assert result.exit_code == 0
+    assert (tmp_path / "config.toml").exists()
+    assert (tmp_path / "data").is_dir()
+
+
 def test_run_dry_run_does_not_rename_files(tmp_path: Path, monkeypatch) -> None:
     inbox = tmp_path / "inbox"
     inbox.mkdir()
