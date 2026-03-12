@@ -1,0 +1,31 @@
+inbox_path = "."
+file_extensions = [".pdf", ".jpg", ".jpeg", ".png", ".txt"]
+recursive = false
+filename_template = "{date}_{sender}_{subject}"
+# Full default prompt lives in src/renamr/models.py as DEFAULT_RENAME_PROMPT.
+# Copy it here and customize if you want provider-specific behavior.
+rename_prompt = """
+---
+language: en
+output_format: json_only
+---
+
+# Purpose
+Extract sender, subject, document date, and filename format from a document for file renaming.
+"""
+
+[llm]
+model = "gpt-4o-mini"
+api_base = ""
+temperature = 0.2
+max_retries = 2
+timeout = 60
+
+[compress]
+enabled = false
+dpi = 150
+jpeg_quality = 80
+
+[logging]
+level = "INFO"
+json_logs = false

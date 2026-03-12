@@ -14,3 +14,5 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --all-groups
       - run: uv run nox
+      - name: Audit dependencies
+        run: uv run pip-audit

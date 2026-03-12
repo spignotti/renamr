@@ -34,6 +34,7 @@ htmlcov/
 .uv_cache/
 
 # Runtime data
+config.toml
 data/undo.json
 
 # Agent runtime artifacts
