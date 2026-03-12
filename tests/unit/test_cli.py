@@ -2,7 +2,7 @@
 
 from typer.testing import CliRunner
 
-from file_renamer.cli import app
+from renamr.cli import app
 
 runner = CliRunner()
 

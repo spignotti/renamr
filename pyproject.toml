@@ -1,5 +1,5 @@
 [project]
-name = "file-renamer"
+name = "renamr"
 version = "0.1.0"
 description = "CLI tool that renames local files using AI-powered metadata extraction"
 authors = [
@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-file-renamer = "file_renamer.cli:main"
+renamr = "renamr.cli:main"
 
 [build-system]
 requires = ["hatchling"]

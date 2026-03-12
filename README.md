@@ -1,6 +1,6 @@
-# File Renamer
-[![CI](https://github.com/spignotti/file-renamer/actions/workflows/ci.yml/badge.svg)](https://github.com/spignotti/file-renamer/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/file-renamer.svg)](https://pypi.org/project/file-renamer/)
+# Renamr
+[![CI](https://github.com/spignotti/renamr/actions/workflows/ci.yml/badge.svg)](https://github.com/spignotti/renamr/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/renamr.svg)](https://pypi.org/project/renamr/)
 
 CLI tool that renames local files using AI-powered metadata extraction.
 
@@ -29,7 +29,7 @@ The scaffold intentionally stops at project setup. Product logic belongs in late
 ## Project Layout
 
 ```text
-src/file_renamer/
+src/renamr/
 tests/
 docs/decisions/
 .github/workflows/
@@ -42,7 +42,7 @@ data/
 ```bash
 uv sync
 uv run nox
-uv run file-renamer --help
+uv run renamr --help
 ```
 
 ## Configuration

@@ -1,4 +1,4 @@
-# File Renamer
+# Renamr
 
 ## Overview
 Python CLI that renames local files from AI-extracted metadata. This repo currently contains scaffold only; implementation work starts after planning.
@@ -12,7 +12,7 @@ Python CLI that renames local files from AI-extracted metadata. This repo curren
 ## Directory Structure
 ```text
 src/
-├── file_renamer/     # Package source
+├── renamr/           # Package source
 tests/
 ├── unit/             # Fast isolated tests
 ├── integration/      # Package-level smoke tests
