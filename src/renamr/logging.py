@@ -18,7 +18,11 @@ def setup_logging(level: str, json_logs: bool) -> None:
         if json_logs
         else structlog.dev.ConsoleRenderer(colors=False)
     )
-    logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO), format="%(message)s")
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(message)s",
+        force=True,
+    )
     structlog.configure(
         processors=[
             structlog.stdlib.filter_by_level,

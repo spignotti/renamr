@@ -79,7 +79,7 @@ def extract_metadata(
                 filename=filename,
             )
             time.sleep(backoff)
-    raise RuntimeError("Metadata extraction retries exhausted.")
+    raise AssertionError("unreachable")
 
 
 def _build_user_prompt(filename: str, created_at: datetime, preview_text: str) -> str:
