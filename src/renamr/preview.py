@@ -53,6 +53,7 @@ def extract_text_preview(filepath: Path, max_chars: int = 1000) -> str:
 def render_pdf_page(pdf_path: Path, dpi: int = 200) -> Path | None:
     """Render the first PDF page into a temporary PNG file."""
     document: fitz.Document | None = None
+    temp_path: Path | None = None
     try:
         document = fitz.open(str(pdf_path))
         if document.page_count == 0:
@@ -64,6 +65,8 @@ def render_pdf_page(pdf_path: Path, dpi: int = 200) -> Path | None:
         pixmap.save(str(temp_path))
         return temp_path
     except Exception as exc:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
         logger.warning("pdf_render_failed", path=str(pdf_path), error=str(exc))
         return None
     finally:
