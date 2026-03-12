@@ -1,16 +1,19 @@
-name: CI
+name: Release
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    tags: ["v*"]
 
 jobs:
-  check:
+  publish:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --all-groups
       - run: uv run nox
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1

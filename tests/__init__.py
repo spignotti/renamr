@@ -1,1 +1,1 @@
-"""Test suite for file-renamer."""
+"""Test suite for renamr."""

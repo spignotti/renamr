@@ -1,10 +1,10 @@
-"""CLI entrypoint for file-renamer."""
+"""CLI entrypoint for renamr."""
 
 from typing import Annotated
 
 import typer
 
-from file_renamer import __version__
+from renamr import __version__
 
 app = typer.Typer(
     add_completion=False,
@@ -24,7 +24,7 @@ def scaffold(
     config: Annotated[str, typer.Option(help="Path to the scaffold config file.")] = "config.toml",
 ) -> None:
     """Confirm the scaffold is installed and ready for implementation."""
-    typer.echo(f"file-renamer scaffold ready. Config path: {config}")
+    typer.echo(f"renamr scaffold ready. Config path: {config}")
 
 
 def main() -> None:

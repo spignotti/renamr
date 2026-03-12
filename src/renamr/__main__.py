@@ -1,4 +1,4 @@
-"""Module entrypoint for file-renamer."""
+"""Module entrypoint for renamr."""
 
 from .cli import main
 

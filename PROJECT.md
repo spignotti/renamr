@@ -1,4 +1,4 @@
-# File Renamer
+# Renamr
 
 ## Identity
 - **What**: CLI tool that renames local files using AI-powered metadata extraction
@@ -52,12 +52,12 @@ Path: "~/Documents/projects/dev/automation"
 - Better CLI UX: colored output, progress indicator for multi-file runs
 - **iCloud file handling**: detect `.icloud` stub files, trigger download via `brctl download <path>`, poll until materialized (with timeout), skip + log on timeout
 - **PDF compression**: `--compress` flag to reduce file size of scanned PDFs (re-render pages via pymupdf at configurable DPI + JPEG quality). No extra dependency needed.
-- **Undo log**: each run writes a JSON log (`data/undo.json`) mapping `old_path → new_path`. `file-renamer undo` reverses the last run. Simple, safe, zero overhead.
+- **Undo log**: each run writes a JSON log (`data/undo.json`) mapping `old_path → new_path`. `renamr undo` reverses the last run. Simple, safe, zero overhead.
 
 ## Project Structure
-file-renamer/
+renamr/
 ├── src/
-│   └── file_renamer/
+│   └── renamr/
 │       ├── __init__.py
 │       ├── cli.py            # Typer CLI (entry point)
 │       ├── config.py         # Pydantic config models + TOML loader
@@ -89,7 +89,7 @@ file-renamer/
 - [ ] Summary report after run (renamed / skipped / failed)
 - [ ] iCloud stub detection + download trigger (`brctl download`) with polling/timeout
 - [ ] `--compress` flag for PDF file size reduction (pymupdf re-render)
-- [ ] Undo log (`data/undo.json`) + `file-renamer undo` command
+- [ ] Undo log (`data/undo.json`) + `renamr undo` command
 - [ ] OSS setup: MIT license, CI workflow, README with badges, `.github/workflows/ci.yml`
 
 ### Nice-to-have (only if time)
@@ -104,6 +104,6 @@ file-renamer/
 - No Instagram / literature / content pipeline features
 
 ## Setup
-- **Git Remote**: https://github.com/silas-workspace/file-renamer.git
+- **Git Remote**: https://github.com/spignotti/renamr.git
 - **Visibility**: Public (OSS, MIT license)
 - **CI**: GitHub Actions (uv sync → nox: lint, typecheck, test)
