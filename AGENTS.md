@@ -1,7 +1,7 @@
 # Renamr
 
 ## Overview
-Python CLI that renames local files from AI-extracted metadata. This repo currently contains scaffold only; implementation work starts after planning.
+Python CLI that renames local files from AI-extracted metadata.
 
 ## Tech Stack
 - Language: Python 3.12+
@@ -48,15 +48,17 @@ Use Google-style docstrings for public modules, functions, and classes.
 - Type aliases: PascalCase
 
 ## Conventions
-- Keep the scaffold simple; do not add product logic without a planned task.
-- Prefer sync code unless there is a proven need for async.
+- Keep the implementation simple and sync-first.
 - Keep config flat and explicit.
+- Prefer small focused helpers over framework-style abstractions.
 
 ## Architecture Decisions
 - Use src/ layout for packaging.
 - Use Typer for the CLI surface.
 - Use LiteLLM so provider changes stay config-only.
+- Keep preview extraction, metadata parsing, file operations, and CLI wiring in separate modules.
 
 ## Known Constraints
-- iCloud handling, PDF compression, and undo support are planned but not implemented in the scaffold.
+- File contents are sent to an external LLM provider; README must keep that explicit.
 - Runtime data lives under `data/` and should stay out of versioned outputs.
+- Undo support only covers the most recent successful rename run.
