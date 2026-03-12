@@ -13,7 +13,7 @@ That can include:
 - rendered document images for image files and image-only PDFs
 - original filenames and file timestamps
 
-Review what is inside your inbox folder before running the tool. Start with `--dry-run` so you can inspect planned renames before any files move. API keys stay on your machine in environment variables, but file contents are sent to the configured provider's API.
+Review what is inside your inbox folder before running the tool. Start with `--dry-run` so you can inspect planned renames before any files move. API keys stay on your machine in environment variables, but file contents are sent to the configured provider's API. The tool includes original filenames in the LLM prompt, so avoid running it on directories containing untrusted filenames. Keep `data/undo.json` private on shared systems. A user with write access to that file could cause `renamr undo` to move files to unexpected locations. Avoid sharing verbose log output publicly because failed auth responses may include API key fragments.
 
 ## Quick Start
 
@@ -51,13 +51,15 @@ Key fields:
 - `recursive`: recurse into subfolders
 - `filename_template`: output pattern such as `{date}_{sender}_{subject}`
 - `rename_prompt`: system prompt sent to the model
-- `[llm]`: model name, optional `api_base`, temperature, retries, timeout
+- `[llm]`: model name, optional `api_base`, temperature, retries, timeout (always use an `https://` endpoint; `http://` sends file content unencrypted)
 - `[compress]`: optional PDF recompression settings
 - `[logging]`: log level and JSON output toggle
 
 `rename_prompt` is intentionally configurable. If your documents are domain-specific, copy the full default prompt from `src/renamr/models.py` and adapt it for your own naming rules.
 
 API keys come from environment variables. With the default OpenAI models, set `OPENAI_API_KEY`. For OpenRouter models, set `OPENROUTER_API_KEY` and use a provider-prefixed model name.
+
+`config.toml` is selected with `--config` and defaults to the current working directory. `data/undo.json` is stored relative to the selected config file, so run `renamr run` and `renamr undo` against the same config path.
 
 ## Commands
 
