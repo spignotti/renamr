@@ -64,7 +64,7 @@ def test_run_dry_run_does_not_rename_files(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_run_help_shows_expected_options() -> None:
-    result = runner.invoke(app, ["run", "--help"])
+    result = runner.invoke(app, ["run", "--help"], color=False, env={"COLUMNS": "120"})
 
     assert result.exit_code == 0
     assert "--config" in result.stdout
