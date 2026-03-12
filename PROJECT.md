@@ -104,6 +104,6 @@ file-renamer/
 - No Instagram / literature / content pipeline features
 
 ## Setup
-- **Git Remote**: https://github.com/silas-workspace/file-renamer.git
+- **Git Remote**: https://github.com/spignotti/file-renamer.git
 - **Visibility**: Public (OSS, MIT license)
 - **CI**: GitHub Actions (uv sync → nox: lint, typecheck, test)

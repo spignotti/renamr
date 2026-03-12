@@ -3,7 +3,7 @@ name = "file-renamer"
 version = "0.1.0"
 description = "CLI tool that renames local files using AI-powered metadata extraction"
 authors = [
-    { name = "SilasPignotti", email = "pignottisilas@gmail.com" }
+    { name = "Silas Pignotti", email = "pignottisilas@gmail.com" }
 ]
 readme = "README.md"
 license = "MIT"

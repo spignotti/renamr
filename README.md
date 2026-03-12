@@ -1,5 +1,5 @@
 # File Renamer
-[![CI](https://github.com/silas-workspace/file-renamer/actions/workflows/ci.yml/badge.svg)](https://github.com/silas-workspace/file-renamer/actions/workflows/ci.yml)
+[![CI](https://github.com/spignotti/file-renamer/actions/workflows/ci.yml/badge.svg)](https://github.com/spignotti/file-renamer/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/file-renamer.svg)](https://pypi.org/project/file-renamer/)
 
 CLI tool that renames local files using AI-powered metadata extraction.
