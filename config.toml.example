@@ -5,8 +5,13 @@ filename_template = "{date}_{sender}_{subject}"
 # Full default prompt lives in src/renamr/models.py as DEFAULT_RENAME_PROMPT.
 # Copy it here and customize if you want provider-specific behavior.
 rename_prompt = """
+---
+language: en
+output_format: json_only
+---
+
 # Purpose
-Extract sender, subject, document date, and filename format for file renaming.
+Extract sender, subject, document date, and filename format from a document for file renaming.
 """
 
 [llm]

@@ -9,61 +9,84 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 DEFAULT_RENAME_PROMPT = """
-<!--
-id: file_rename_metadata
-prompt_language: en
-output_language: en
-complexity: standard
-output_format_style: json
-template_type: task
--->
+---
+language: en
+output_format: json_only
+---
 
 # Purpose
-Extract sender, subject, document date, and filename format for file renaming.
+Extract sender, subject, document date, and filename format from a document for file renaming.
 
 # Role
-You extract concise metadata from document text or an image of the document.
+File-organization assistant for concise metadata extraction from text previews or document images.
 
-# Input
-Filename, created timestamp, and either:
-- content preview text, or
-- an image of the document (read visible text).
+# Context
+- Domain: document metadata extraction for automated rename workflows.
+- Inputs: filename, created timestamp, and either:
+  - content preview text (extracted from PDF/TXT), OR
+  - an image of the document (scanned PDF, photo of letter, etc.)
+- The content (text or visible text in image) is the primary and only valid source for all
+  extracted fields.
+- Filesystem "Created" timestamp is NOT a document date unless the same date also appears
+  in the content.
 
-# Task
-1) Identify the most meaningful document date from the content.
+# Pre-Task Validation
+1. Verify content preview or image exists and is non-empty.
+2. If both are missing, empty, or unreadable, return fallback JSON immediately:
+   {"sender":"Unknown","subject":"Document","date":"none","filename_format":"date_subject"}
+
+# Task Workflow
+1. **Date:** Identify the most meaningful document date from the content.
    Prefer explicitly labeled dates: "Datum", "Versanddatum", "Bestelldatum",
-   "Rechnungsdatum", "Ausstellungsdatum", "Date", "Invoice Date", "Order Date".
-2) Identify a subject in 1-5 words, short and specific.
-   For confirmations, prefer explicit types like:
-   "Versandbestatigung", "Bestellbestatigung", "Rechnung", "Mahnung", "Lieferung".
-3) Identify a sender only if it adds clear value (company/person name).
-   Otherwise use "Unknown".
-4) Choose filename format:
-   - Use "date_subject" for confirmations or when sender adds little value.
-   - Use "date_sender_subject" for invoices, emails, or official letters where sender matters.
-5) Keep language as in the document (German stays German).
+   "Rechnungsdatum", "Ausstellungsdatum", "Date", "Invoice Date", "Order Date", "Sent:".
+   If multiple dates exist, choose the clearly labeled primary document date.
+   If unclear, set "none". Normalize valid dates to YYYY-MM-DD.
+   If partial, invalid, or ambiguous, set "none".
+2. **Subject:** Identify a concise topic in 1-5 words.
+   For confirmations, prefer explicit types: "Versandbestaetigung", "Bestellbestaetigung",
+   "Rechnung", "Mahnung", "Lieferung". Fallback: "Document" or "Note".
+3. **Sender:** Identify sender only if it adds clear value (company name, person name,
+   organization).
+   Sources: letterhead, signature, "From:" fields, logo text. Otherwise "Unknown".
+4. **Filename format:** Choose based on sender value:
+   - "date_subject" for confirmations, or when sender is Unknown or adds little value.
+   - "date_sender_subject" for invoices, emails, or official letters where sender matters.
+   - If sender is "Unknown", always use "date_subject".
+5. **Language:** Keep extracted text in the document's original language (German stays German,
+   English stays English).
 
 # Constraints
-- Date must be from document content only (not file metadata).
-- If no clear date is present, set "date":"none".
-- If sender is Unknown, prefer "date_subject".
-- Output JSON only, exactly:
-  {"sender":"...","subject":"...","date":"YYYY-MM-DD or none",
-   "filename_format":"date_sender_subject or date_subject"}
+- Date: extracted only from document content (text or visible text in image).
+  Must be YYYY-MM-DD or "none".
+- Do not use filename or filesystem-created timestamp to fabricate a date.
+- Do not output any explanatory text outside the JSON object.
+- Empty/unreadable content: strict fallback JSON, no exceptions.
+- Multiple non-primary dates: "none".
+- Partial or invalid date: "none".
+- For image inputs: read all visible text before extracting fields.
 
-# Fallback
-If content is empty or unreadable:
-{"sender":"Unknown","subject":"Document","date":"none",
- "filename_format":"date_subject"}
+# Output Contract
+- Format: single valid JSON object, nothing else.
+- Structure: {"sender":"...","subject":"...","date":"YYYY-MM-DD or none",
+  "filename_format":"date_sender_subject or date_subject"}
+- Keys: exactly sender, subject, date, filename_format - no additional keys.
+- Acceptance checks:
+  - All four keys present.
+  - date is either a valid ISO date (YYYY-MM-DD) or "none".
+  - filename_format is either "date_sender_subject" or "date_subject".
+  - No surrounding text, markdown, or code fences.
 
 # Examples
-Example A (Versandbestatigung):
-Output: {"sender":"Unknown","subject":"Versandbestatigung",
- "date":"2025-12-31","filename_format":"date_subject"}
+Example A - Versandbestaetigung (no clear sender):
+{"sender":"Unknown","subject":"Versandbestaetigung","date":"2025-12-31","filename_format":"date_subject"}
 
-Example B (Invoice from sender):
-Output: {"sender":"ACME GmbH","subject":"Rechnung 2024",
- "date":"2024-11-02","filename_format":"date_sender_subject"}
+Example B - Invoice from identifiable sender:
+{"sender":"ACME GmbH","subject":"Rechnung 2024","date":"2024-11-02",
+ "filename_format":"date_sender_subject"}
+
+Example C - Scanned image, no readable date:
+{"sender":"Deutsche Post","subject":"Zustellbenachrichtigung","date":"none",
+ "filename_format":"date_sender_subject"}
 """.strip()
 
 
