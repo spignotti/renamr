@@ -6,7 +6,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 DEFAULT_RENAME_PROMPT = """
 ---
@@ -128,6 +128,19 @@ class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     compress: CompressConfig = Field(default_factory=CompressConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+
+    @field_validator("filename_template")
+    @classmethod
+    def validate_filename_template(cls, value: str) -> str:
+        """Reject templates that reference unsupported placeholders."""
+        try:
+            value.format(date="x", sender="x", subject="x")
+        except KeyError as exc:
+            placeholder = exc.args[0]
+            raise ValueError(
+                f"filename_template contains unknown placeholder: {placeholder}"
+            ) from exc
+        return value
 
 
 def load_config(path: Path) -> AppConfig:

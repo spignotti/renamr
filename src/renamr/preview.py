@@ -52,6 +52,7 @@ def extract_text_preview(filepath: Path, max_chars: int = 1000) -> str:
 
 def render_pdf_page(pdf_path: Path, dpi: int = 200) -> Path | None:
     """Render the first PDF page into a temporary PNG file."""
+    document: fitz.Document | None = None
     try:
         document = fitz.open(str(pdf_path))
         if document.page_count == 0:
@@ -65,6 +66,9 @@ def render_pdf_page(pdf_path: Path, dpi: int = 200) -> Path | None:
     except Exception as exc:
         logger.warning("pdf_render_failed", path=str(pdf_path), error=str(exc))
         return None
+    finally:
+        if document is not None:
+            document.close()
 
 
 def encode_image_base64(image_path: Path) -> str | None:
@@ -87,6 +91,8 @@ def is_image_file(filepath: Path) -> bool:
 
 def compress_pdf(src: Path, dest: Path, dpi: int = 150, jpeg_quality: int = 80) -> bool:
     """Re-render a PDF to JPEG-backed pages and keep it only if smaller."""
+    document: fitz.Document | None = None
+    output: fitz.Document | None = None
     try:
         document = fitz.open(str(src))
         output = fitz.open()
@@ -99,11 +105,14 @@ def compress_pdf(src: Path, dest: Path, dpi: int = 150, jpeg_quality: int = 80) 
             new_page = output.new_page(width=rect.width, height=rect.height)
             new_page.insert_image(rect, stream=buffer.getvalue())
         output.save(str(dest), deflate=True)
-        output.close()
-        document.close()
     except Exception as exc:
         logger.warning("pdf_compress_failed", path=str(src), error=str(exc))
         return False
+    finally:
+        if output is not None:
+            output.close()
+        if document is not None:
+            document.close()
     if dest.stat().st_size >= src.stat().st_size:
         dest.unlink(missing_ok=True)
         return False

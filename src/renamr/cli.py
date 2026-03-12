@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import shutil
+import importlib.resources
 from pathlib import Path
 from typing import Annotated
 
@@ -38,7 +38,8 @@ def init() -> None:
     if config_path.exists():
         typer.echo("config.toml already exists")
     else:
-        shutil.copyfile("config.toml.example", config_path)
+        example = importlib.resources.files("renamr").joinpath("config.toml.example").read_text()
+        config_path.write_text(example)
         typer.echo("Created config.toml")
     Path("data").mkdir(parents=True, exist_ok=True)
     typer.echo("Ensured data/ exists")
@@ -66,15 +67,19 @@ def run(
         compress = app_config.compress.enabled
     log_level = "DEBUG" if verbose else app_config.logging.level
     setup_logging(log_level, app_config.logging.json_logs)
-    summary = run_pipeline(app_config, dry_run=dry_run, compress=compress)
+    data_dir = config.parent / "data"
+    summary = run_pipeline(app_config, dry_run=dry_run, compress=compress, data_dir=data_dir)
     _print_summary(summary)
 
 
 @app.command()
-def undo() -> None:
+def undo(
+    config: Annotated[Path, typer.Option("--config")] = Path("config.toml"),
+) -> None:
     """Undo the last successful rename run."""
     setup_logging("INFO", False)
-    reversed_pairs = undo_last_run(Path("data"))
+    data_dir = config.parent / "data"
+    reversed_pairs = undo_last_run(data_dir)
     if not reversed_pairs:
         typer.secho("Nothing to undo.", fg=typer.colors.YELLOW)
         return

@@ -103,16 +103,18 @@ def process_file(filepath: Path, config: AppConfig, dry_run: bool) -> RenameResu
         return RenameResult(filepath, None, None, "failed", str(exc))
 
 
-def run(config: AppConfig, dry_run: bool, compress: bool) -> RunSummary:
+def run(config: AppConfig, dry_run: bool, compress: bool, data_dir: Path) -> RunSummary:
     """Run the rename pipeline over configured files."""
     inbox = Path(config.inbox_path)
+    if not inbox.exists():
+        raise FileNotFoundError(f"Inbox path does not exist: {inbox}")
     results = [_download_stub(stub) for stub in _scan_icloud_stubs(inbox, config.recursive)]
     filepaths = scan_files(inbox, config.file_extensions, config.recursive)
     results.extend(process_file(path, config, dry_run) for path in filepaths)
     if compress and not dry_run:
         _compress_renamed_pdfs(results, config)
     if not dry_run:
-        write_undo_log(results, Path("data"))
+        write_undo_log(results, data_dir)
     return RunSummary(results)
 
 
