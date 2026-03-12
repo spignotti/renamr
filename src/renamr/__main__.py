@@ -1,4 +1,4 @@
-"""Module entrypoint for renamr."""
+"""Support `python -m renamr`."""
 
 from .cli import main
 
