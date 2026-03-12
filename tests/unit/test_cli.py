@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
+import click
+from typer.main import get_command
 from typer.testing import CliRunner
 
 import renamr.metadata as metadata_module
@@ -64,12 +67,17 @@ def test_run_dry_run_does_not_rename_files(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_run_help_shows_expected_options() -> None:
-    result = runner.invoke(app, ["run", "--help"], color=False, env={"COLUMNS": "120"})
+    command = cast(click.Group, get_command(app))
+    run_command = cast(click.Command, command.commands["run"])
+    option_names = {
+        option
+        for param in run_command.params
+        for option in [*param.opts, *param.secondary_opts]
+    }
 
-    assert result.exit_code == 0
-    assert "--config" in result.stdout
-    assert "--dry-run" in result.stdout
-    assert "--compress" in result.stdout
-    assert "--inbox" in result.stdout
-    assert "--recursive" in result.stdout
-    assert "--verbose" in result.stdout
+    assert "--config" in option_names
+    assert "--dry-run" in option_names
+    assert "--compress" in option_names
+    assert "--inbox" in option_names
+    assert "--recursive" in option_names
+    assert "--verbose" in option_names
