@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project adheres to Semantic Versioning.
 
+## [1.0.1] - 2026-03-13
+
+
+
+### Fixed
+
+- **version:** Read installed package version
+
+
 ## [1.0.0] - 2026-03-12
 
 
@@ -12,6 +21,11 @@ and this project adheres to Semantic Versioning.
 ### Added
 
 - **cli:** Implement AI-powered file renaming workflow 
+
+
+### Maintenance
+
+- Release v1.0.0
 
 
 ## [0.1.0] - 2026-03-12
