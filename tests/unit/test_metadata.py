@@ -29,6 +29,7 @@ def test_parse_date_string_supports_expected_formats() -> None:
     assert _parse_date_string("2024-01-31") == date(2024, 1, 31)
     assert _parse_date_string("31.01.2024") == date(2024, 1, 31)
     assert _parse_date_string("31. Maerz 2024") == date(2024, 3, 31)
+    assert _parse_date_string("20241332") is None
     assert _parse_date_string("none") is None
 
 

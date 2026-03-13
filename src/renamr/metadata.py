@@ -144,7 +144,10 @@ def _parse_date_string(value: str) -> date | None:
         if not match:
             continue
         if fmt is not None:
-            return datetime.strptime(match.group(0), fmt).date()
+            try:
+                return datetime.strptime(match.group(0), fmt).date()
+            except ValueError:
+                continue
         parsed = _parse_ambiguous_date(match.group(1), match.group(2), match.group(3))
         if parsed is not None:
             return parsed

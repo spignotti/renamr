@@ -39,6 +39,32 @@ def test_init_creates_config_from_package_data(tmp_path: Path, monkeypatch) -> N
     content = config_path.read_text()
     assert f'inbox_paths = ["{inbox.resolve()}"]' in content
     assert 'language = "en"' in content
+    assert result.stdout.count(str(config_path)) == 1
+
+
+def test_init_does_not_call_mkdir_when_config_exists(tmp_path: Path, monkeypatch) -> None:
+    config_path = tmp_path / "existing-config" / "config.toml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text('language = "en"\n')
+    mkdir_calls: list[Path] = []
+    original_mkdir = Path.mkdir
+
+    def tracking_mkdir(
+        self: Path,
+        mode: int = 0o777,
+        parents: bool = False,
+        exist_ok: bool = False,
+    ) -> None:
+        mkdir_calls.append(self)
+        original_mkdir(self, mode=mode, parents=parents, exist_ok=exist_ok)
+
+    monkeypatch.setattr(Path, "mkdir", tracking_mkdir)
+
+    result = runner.invoke(app, ["init", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert f"{config_path} already exists. Delete it to reinitialize." in result.stdout
+    assert mkdir_calls == []
 
 
 def test_run_dry_run_does_not_rename_files(tmp_path: Path, monkeypatch) -> None:

@@ -45,10 +45,10 @@ def init(
     """Create a local config file and data directory."""
     setup_logging("INFO", False)
     config_path = config or _config_dir() / "config.toml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
     if config_path.exists():
         typer.echo(f"{config_path} already exists. Delete it to reinitialize.")
         return
+    config_path.parent.mkdir(parents=True, exist_ok=True)
 
     inbox_path = Path(typer.prompt("Inbox folder path")).expanduser().resolve()
     language = typer.prompt("Language for extracted metadata", default="en")
@@ -67,7 +67,6 @@ def init(
         )
     )
     typer.echo(f"Created {config_path}")
-    typer.echo(f"Config file: {config_path}")
     typer.echo(f"Ensured {config_path.parent} exists")
 
 
