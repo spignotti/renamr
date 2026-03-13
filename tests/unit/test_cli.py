@@ -11,6 +11,7 @@ import click
 from typer.main import get_command
 from typer.testing import CliRunner
 
+import renamr.cli as cli_module
 import renamr.metadata as metadata_module
 from renamr.cli import app
 
@@ -25,13 +26,19 @@ def test_version_command_outputs_version() -> None:
 
 
 def test_init_creates_config_from_package_data(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
+    inbox = tmp_path / "inbox"
+    inbox.mkdir()
+    config_dir = tmp_path / "config-home"
+    monkeypatch.setattr(cli_module, "_config_dir", lambda: config_dir)
 
-    result = runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["init"], input=f"{inbox}\nen\ngpt-4o-mini\n")
 
     assert result.exit_code == 0
-    assert (tmp_path / "config.toml").exists()
-    assert (tmp_path / "data").is_dir()
+    config_path = config_dir / "config.toml"
+    assert config_path.exists()
+    content = config_path.read_text()
+    assert f'inbox_paths = ["{inbox.resolve()}"]' in content
+    assert 'language = "en"' in content
 
 
 def test_run_dry_run_does_not_rename_files(tmp_path: Path, monkeypatch) -> None:
@@ -40,7 +47,7 @@ def test_run_dry_run_does_not_rename_files(tmp_path: Path, monkeypatch) -> None:
     original_file = inbox / "note.txt"
     original_file.write_text("Invoice Date 2024-01-31")
     (tmp_path / "config.toml").write_text(
-        f'inbox_path = "{inbox}"\nfile_extensions = [".txt"]\n'
+        f'inbox_paths = ["{inbox}"]\nfile_extensions = [".txt"]\n'
     )
 
     monkeypatch.setattr(
