@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project adheres to Semantic Versioning.
 
+## [1.1.0] - 2026-03-13
+
+
+
+### Added
+
+- **cli:** Add global config and multi-inbox support
+
+
+### Fixed
+
+- Prevent nox from mutating lockfile
+
+
 ## [1.0.1] - 2026-03-13
 
 
@@ -12,6 +26,11 @@ and this project adheres to Semantic Versioning.
 ### Fixed
 
 - **version:** Read installed package version
+
+
+### Maintenance
+
+- Release v1.0.1
 
 
 ## [1.0.0] - 2026-03-12
