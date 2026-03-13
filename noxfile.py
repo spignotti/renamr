@@ -16,6 +16,7 @@ def sync_project(session: nox.Session) -> None:
         "uv",
         "sync",
         "--all-groups",
+        "--locked",
         "--reinstall-package",
         PROJECT_NAME,
         external=True,
