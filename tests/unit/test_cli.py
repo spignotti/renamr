@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -20,7 +21,7 @@ def test_version_command_outputs_version() -> None:
     result = runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
-    assert "0.1.0" in result.stdout
+    assert version("renamr") in result.stdout
 
 
 def test_init_creates_config_from_package_data(tmp_path: Path, monkeypatch) -> None:
