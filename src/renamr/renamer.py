@@ -77,7 +77,8 @@ def scan_files(inbox: Path, extensions: list[str], recursive: bool) -> list[Path
 def process_file(filepath: Path, config: AppConfig, dry_run: bool) -> RenameResult:
     """Extract metadata, build a filename, and optionally rename the file."""
     try:
-        created_at = datetime.fromtimestamp(filepath.stat().st_ctime, tz=UTC)
+        stat = filepath.stat()
+        created_at = datetime.fromtimestamp(getattr(stat, "st_birthtime", stat.st_mtime), tz=UTC)
         preview_text = extract_text_preview(filepath)
         image_base64 = _get_image_payload(filepath, preview_text)
         metadata = extract_metadata(
@@ -105,12 +106,16 @@ def process_file(filepath: Path, config: AppConfig, dry_run: bool) -> RenameResu
 
 def run(config: AppConfig, dry_run: bool, compress: bool, data_dir: Path) -> RunSummary:
     """Run the rename pipeline over configured files."""
-    inbox = Path(config.inbox_path)
-    if not inbox.exists():
-        raise FileNotFoundError(f"Inbox path does not exist: {inbox}")
-    results = [_download_stub(stub) for stub in _scan_icloud_stubs(inbox, config.recursive)]
-    filepaths = scan_files(inbox, config.file_extensions, config.recursive)
-    results.extend(process_file(path, config, dry_run) for path in filepaths)
+    inboxes = [Path(path_str) for path_str in config.inbox_paths]
+    for inbox in inboxes:
+        if not inbox.exists():
+            raise FileNotFoundError(f"Inbox path does not exist: {inbox}")
+
+    results: list[RenameResult] = []
+    for inbox in inboxes:
+        results.extend(_download_stub(stub) for stub in _scan_icloud_stubs(inbox, config.recursive))
+        filepaths = scan_files(inbox, config.file_extensions, config.recursive)
+        results.extend(process_file(path, config, dry_run) for path in filepaths)
     if compress and not dry_run:
         _compress_renamed_pdfs(results, config)
     if not dry_run:

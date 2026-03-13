@@ -48,8 +48,12 @@ def extract_metadata(
             filename_format="date_subject",
         )
     prompt = _build_user_prompt(filename, created_at, preview_text)
+    system_content = (
+        f"Language for all extracted metadata values: {config.language}\n\n"
+        f"{config.rename_prompt}"
+    )
     messages = [
-        {"role": "system", "content": config.rename_prompt},
+        {"role": "system", "content": system_content},
         {"role": "user", "content": _build_user_content(prompt, image_base64)},
     ]
     for attempt in range(config.llm.max_retries + 1):
@@ -140,7 +144,10 @@ def _parse_date_string(value: str) -> date | None:
         if not match:
             continue
         if fmt is not None:
-            return datetime.strptime(match.group(0), fmt).date()
+            try:
+                return datetime.strptime(match.group(0), fmt).date()
+            except ValueError:
+                continue
         parsed = _parse_ambiguous_date(match.group(1), match.group(2), match.group(3))
         if parsed is not None:
             return parsed
@@ -200,18 +207,25 @@ _DATE_MATCHERS = [
 
 _MONTH_MAP = {
     "januar": 1,
+    "january": 1,
     "jan": 1,
     "februar": 2,
+    "february": 2,
     "feb": 2,
     "maerz": 3,
     "marz": 3,
+    "march": 3,
     "mrz": 3,
+    "mar": 3,
     "april": 4,
     "apr": 4,
     "mai": 5,
+    "may": 5,
     "juni": 6,
+    "june": 6,
     "jun": 6,
     "juli": 7,
+    "july": 7,
     "jul": 7,
     "august": 8,
     "aug": 8,
@@ -219,9 +233,13 @@ _MONTH_MAP = {
     "sep": 9,
     "sept": 9,
     "oktober": 10,
+    "october": 10,
     "okt": 10,
+    "oct": 10,
     "november": 11,
     "nov": 11,
+    "december": 12,
     "dezember": 12,
+    "dec": 12,
     "dez": 12,
 }

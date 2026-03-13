@@ -1,18 +1,11 @@
-inbox_path = "."
+inbox_paths = ["/path/to/your/folder"]
+# inbox_paths = ["/folder/one", "/folder/two"]  # multiple inboxes supported
+language = "en"  # language for extracted metadata: "en", "de", or any locale name
 file_extensions = [".pdf", ".jpg", ".jpeg", ".png", ".txt"]
 recursive = false
 filename_template = "{date}_{sender}_{subject}"
 # Full default prompt lives in src/renamr/models.py as DEFAULT_RENAME_PROMPT.
 # Copy it here and customize if you want provider-specific behavior.
-rename_prompt = """
----
-language: en
-output_format: json_only
----
-
-# Purpose
-Extract sender, subject, document date, and filename format from a document for file renaming.
-"""
 
 [llm]
 model = "gpt-4o-mini"

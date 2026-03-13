@@ -118,11 +118,12 @@ class CompressConfig(BaseModel):
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
-    inbox_path: str = Field(default=".")
+    inbox_paths: list[str] = Field(default_factory=lambda: ["."])
     file_extensions: list[str] = Field(
         default_factory=lambda: [".pdf", ".jpg", ".jpeg", ".png", ".txt"]
     )
     recursive: bool = Field(default=False)
+    language: str = Field(default="en")
     filename_template: str = Field(default="{date}_{sender}_{subject}")
     rename_prompt: str = Field(default=DEFAULT_RENAME_PROMPT)
     llm: LLMConfig = Field(default_factory=LLMConfig)

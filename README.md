@@ -12,9 +12,9 @@ AI-powered CLI that renames files based on their content.
 Scanned documents, downloads, and exported files often arrive with useless names like `scan_001.pdf` or `IMG_5847.jpg`. renamr reads each file — extracting text from PDFs, rendering pages as images for vision models, or encoding photos directly — sends a preview to an LLM, and renames the file to a structured format based on the content it actually finds.
 
 ```
-scan_001.pdf          ->  240115_ACME_Rechnung.pdf
-IMG_5847.jpg          ->  241203_DeutschePost_Zustellbenachrichtigung.jpg
-invoice_download.pdf  ->  250110_Amazon_Bestellbestaetigung.pdf
+scan_001.pdf          ->  240115_ACME_Invoice.pdf
+IMG_5847.jpg          ->  241203_PostOffice_DeliveryNotice.jpg
+invoice_download.pdf  ->  250110_Amazon_OrderConfirmation.pdf
 ```
 
 Only the filename changes. Files are never modified.
@@ -24,7 +24,9 @@ Only the filename changes. Files are never modified.
 - Content-aware renaming via any LiteLLM-supported provider (OpenAI, OpenRouter, Anthropic, local models)
 - PDF text extraction for text-based documents
 - Vision model support for scanned PDFs and image files
-- iCloud evicted file handling — triggers download via `brctl` before processing (macOS)
+- iCloud evicted file handling — auto-downloads stubs via `brctl` before processing (macOS only)
+- Multi-inbox support — configure one or more folders in a single config
+- Configurable output language — extracted metadata returned in any language
 - Dry-run mode to preview renames without touching files
 - Undo the last run with a single command
 - Configurable output template (`{date}_{sender}_{subject}`), file extensions, and system prompt
@@ -45,19 +47,22 @@ uv tool install renamr
 ## Quick Start
 
 ```bash
-# Create config.toml and data/ in the current directory
+# One-time global install
+uv tool install renamr   # or: pip install renamr
+
+# First-run setup — creates ~/.config/renamr/config.toml
 renamr init
 
 # Set your API key
 export OPENAI_API_KEY="your-key"
 
-# Preview renames without touching any files
+# Preview renames
 renamr run --dry-run
 
 # Rename files
 renamr run
 
-# Undo the last run
+# Undo last run
 renamr undo
 ```
 
@@ -69,10 +74,14 @@ renamr run --inbox ~/Documents/inbox --dry-run
 
 ## Configuration
 
-`renamr init` creates a `config.toml` in the current directory. The full set of options:
+`renamr init` creates `~/.config/renamr/config.toml` by default. On Linux, `XDG_CONFIG_HOME`
+is respected, so the actual path becomes `$XDG_CONFIG_HOME/renamr/config.toml` when set.
+
+The full set of options:
 
 ```toml
-inbox_path = "."
+inbox_paths = ["/path/to/your/folder"]
+language = "en"
 file_extensions = [".pdf", ".jpg", ".jpeg", ".png", ".txt"]
 recursive = false
 filename_template = "{date}_{sender}_{subject}"
@@ -95,9 +104,15 @@ level = "INFO"
 json_logs = false
 ```
 
-`filename_template` supports three placeholders: `{date}`, `{sender}`, `{subject}`. The date is extracted from document content when available, falling back to the file's creation timestamp.
+`inbox_paths` accepts one or more folders. `renamr run` processes all of them in one pass.
+Use `--inbox /some/folder` for a one-off override without editing the config.
 
-`data/undo.json` is stored relative to the config file. Always run `renamr run` and `renamr undo` with the same `--config` path, or from the same directory when using the default.
+`filename_template` supports three placeholders: `{date}`, `{sender}`, `{subject}`. Changing
+the order does not affect metadata extraction — the model still returns the same fields, and
+renamr only changes how they are assembled into the final filename.
+
+`undo.json` is stored next to the config file. With the default setup, that means
+`~/.config/renamr/undo.json`.
 
 **Switching providers.** Change `model` and set `api_base`. For OpenRouter:
 
@@ -129,7 +144,7 @@ Then set `OPENROUTER_API_KEY` instead of `OPENAI_API_KEY`. Any provider supporte
 Additional notes:
 
 - Always use an `https://` endpoint for `api_base`. An `http://` URL sends file content unencrypted.
-- Keep `data/undo.json` private on shared systems — it contains the file paths from the last run.
+- Keep `~/.config/renamr/undo.json` private on shared systems — it contains the file paths from the last run.
 - Avoid sharing verbose log output publicly; failed auth responses may include API key fragments.
 
 ## Maintenance
