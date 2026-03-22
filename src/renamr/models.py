@@ -93,7 +93,7 @@ Example C - Scanned image, no readable date:
 class LoggingConfig(BaseModel):
     """Logging-related configuration."""
 
-    level: str = Field(default="INFO")
+    level: str = Field(default="WARNING")
     json_logs: bool = Field(default=False)
 
 

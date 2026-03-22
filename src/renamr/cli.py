@@ -43,7 +43,7 @@ def init(
     config: Annotated[Path | None, typer.Option("--config")] = None,
 ) -> None:
     """Create a local config file and data directory."""
-    setup_logging("INFO", False)
+    setup_logging("WARNING", False)
     config_path = config or _config_dir() / "config.toml"
     if config_path.exists():
         typer.echo(f"{config_path} already exists. Delete it to reinitialize.")
@@ -103,7 +103,7 @@ def undo(
     config: Annotated[Path | None, typer.Option("--config")] = None,
 ) -> None:
     """Undo the last successful rename run."""
-    setup_logging("INFO", False)
+    setup_logging("WARNING", False)
     config_path = config or _config_dir() / "config.toml"
     data_dir = config_path.parent
     reversed_pairs = undo_last_run(data_dir)

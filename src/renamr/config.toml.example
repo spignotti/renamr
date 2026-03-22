@@ -20,5 +20,5 @@ dpi = 150
 jpeg_quality = 80
 
 [logging]
-level = "INFO"
+level = "WARNING"
 json_logs = false

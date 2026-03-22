@@ -100,9 +100,12 @@ dpi = 150
 jpeg_quality = 80
 
 [logging]
-level = "INFO"
+level = "WARNING"
 json_logs = false
 ```
+
+Set `logging.level = "WARNING"` to keep routine CLI output quiet. Use `renamr run --verbose`
+only when you want debug logging for troubleshooting.
 
 `inbox_paths` accepts one or more folders. `renamr run` processes all of them in one pass.
 Use `--inbox /some/folder` for a one-off override without editing the config.
