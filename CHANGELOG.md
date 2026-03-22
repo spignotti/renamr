@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project adheres to Semantic Versioning.
 
+## [1.1.1] - 2026-03-22
+
+
+
+### Maintenance
+
+- Migrate to opencode workflow
+
+
 ## [1.1.0] - 2026-03-13
 
 
@@ -17,6 +26,11 @@ and this project adheres to Semantic Versioning.
 ### Fixed
 
 - Prevent nox from mutating lockfile
+
+
+### Maintenance
+
+- Release v1.1.0
 
 
 ## [1.0.1] - 2026-03-13
