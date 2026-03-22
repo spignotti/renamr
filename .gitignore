@@ -36,8 +36,3 @@ htmlcov/
 # Runtime data
 config.toml
 data/undo.json
-
-# Agent runtime artifacts
-.pi/plans/
-.pi/reviews/
-.pi/LESSONS.md
