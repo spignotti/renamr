@@ -3,6 +3,14 @@
 ## Overview
 Python CLI that renames local files from AI-extracted metadata.
 
+## Repository Category
+
+`oss` - public, publishable, reviewable.
+
+- always work on a feature branch, never directly on `main`
+- conventional commits, PR flow, squash merge in GitHub UI
+- keep README, packaging metadata, and release hygiene public-facing and intentional
+
 ## Tech Stack
 - Language: Python 3.12+
 - Framework: Typer
@@ -19,6 +27,14 @@ tests/
 docs/
 ├── decisions/        # Architecture notes if needed later
 ```
+
+## Validation
+
+- `uv run nox` - full validation gate; run before every commit
+- `nox -s lint` - docs, config, comment-only changes
+- `nox -s lint typecheck` - structural changes (new modules, imports, type signatures)
+- `nox -s lint typecheck test` - logic or behavior changes
+- `nox -s ci` - CI-equivalent local check
 
 ## Code Quality
 
@@ -51,6 +67,11 @@ Use Google-style docstrings for public modules, functions, and classes.
 - Keep the implementation simple and sync-first.
 - Keep config flat and explicit.
 - Prefer small focused helpers over framework-style abstractions.
+
+## Library Documentation
+
+Context7 MCP is available in this project. When working with external libraries, prefer
+version-specific docs from Context7 instead of relying on memory.
 
 ## Architecture Decisions
 - Use src/ layout for packaging.
