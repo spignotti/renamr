@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project adheres to Semantic Versioning.
 
+## [1.2.0] - 2026-04-06
+
+### Added
+
+- **config:** Per-inbox configuration with `[[inbox]]` sections supporting per-folder overrides for `filename_template`, `language`, and `rename_prompt`
+- **extractor:** Hybrid text-first extraction with vision fallback for scanned PDFs (no separate OCR model needed)
+- **ollama:** First-class support for local Ollama backend via LiteLLM
+- **backwards-compat:** Legacy `inbox_paths` format still supported with deprecation warning
+
+### Changed
+
+- **config:** New TOML format uses `[[inbox]]` array-of-tables instead of flat `inbox_paths` list
+- **docs:** README restructured with new Ollama Setup section and privacy callout for local models
+- **init:** Config template updated with `[[inbox]]` syntax and Ollama example
+
 ## [1.1.1] - 2026-03-22
 
 
