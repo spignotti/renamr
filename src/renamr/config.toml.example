@@ -1,15 +1,33 @@
-inbox_paths = ["/path/to/your/folder"]
-# inbox_paths = ["/folder/one", "/folder/two"]  # multiple inboxes supported
-language = "en"  # language for extracted metadata: "en", "de", or any locale name
-file_extensions = [".pdf", ".jpg", ".jpeg", ".png", ".txt"]
-recursive = false
+# Global defaults (used when not overridden per inbox)
+language = "en"
 filename_template = "{date}_{sender}_{subject}"
-# Full default prompt lives in src/renamr/models.py as DEFAULT_RENAME_PROMPT.
-# Copy it here and customize if you want provider-specific behavior.
+# rename_prompt = "..."  # override the default prompt
+
+# Per-inbox configuration (replaces the old inbox_paths list)
+# Each [[inbox]] section can override: filename_template, language, rename_prompt
+[[inbox]]
+path = "/path/to/your/folder"
+
+# Example: Multiple inboxes with different settings
+# [[inbox]]
+# path = "/Users/you/Documents/Rechnungen"
+# filename_template = "{date}_{sender}_{subject}"
+# language = "de"
+#
+# [[inbox]]
+# path = "/Users/you/Documents/Scans"
+# filename_template = "{date}_{subject}"
+# rename_prompt = "Extract only date and subject. Ignore sender."
 
 [llm]
 model = "gpt-4o-mini"
-api_base = ""
+# api_base = ""  # leave empty for direct OpenAI; set for OpenRouter or local Ollama
+
+# Example: Ollama local setup
+# model = "ollama/gemma4:e2b"
+# api_base = "http://localhost:11434"
+# temperature = 0.2
+
 temperature = 0.2
 max_retries = 2
 timeout = 60

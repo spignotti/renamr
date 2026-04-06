@@ -16,7 +16,7 @@ from renamr.models import (
     DEFAULT_RENAME_PROMPT as MODELS_DEFAULT_RENAME_PROMPT,
 )
 from renamr.models import (
-    AppConfig,
+    LLMConfig,
 )
 
 logger = structlog.get_logger(__name__)
@@ -37,7 +37,9 @@ def extract_metadata(
     created_at: datetime,
     preview_text: str,
     image_base64: str | None,
-    config: AppConfig,
+    language: str,
+    rename_prompt: str,
+    llm_config: LLMConfig,
 ) -> FileMetadata:
     """Extract rename metadata from preview text and optional document image."""
     if not preview_text.strip() and image_base64 is None:
@@ -49,29 +51,29 @@ def extract_metadata(
         )
     prompt = _build_user_prompt(filename, created_at, preview_text)
     system_content = (
-        f"Language for all extracted metadata values: {config.language}\n\n"
-        f"{config.rename_prompt}"
+        f"Language for all extracted metadata values: {language}\n\n"
+        f"{rename_prompt}"
     )
     messages = [
         {"role": "system", "content": system_content},
         {"role": "user", "content": _build_user_content(prompt, image_base64)},
     ]
-    for attempt in range(config.llm.max_retries + 1):
+    for attempt in range(llm_config.max_retries + 1):
         try:
             response = completion(
-                model=config.llm.model,
+                model=llm_config.model,
                 messages=messages,
                 response_format={"type": "json_object"},
-                temperature=config.llm.temperature,
-                api_base=config.llm.api_base,
-                timeout=config.llm.timeout,
+                temperature=llm_config.temperature,
+                api_base=llm_config.api_base,
+                timeout=llm_config.timeout,
             )
             content = cast(Any, response).choices[0].message.content
             if not content:
                 raise ValueError("Empty response content from LiteLLM.")
             return _parse_metadata(content)
         except Exception as exc:
-            if attempt >= config.llm.max_retries:
+            if attempt >= llm_config.max_retries:
                 logger.exception("metadata_extraction_failed", error=str(exc), filename=filename)
                 raise
             backoff = min(2**attempt, 30)

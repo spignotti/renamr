@@ -21,28 +21,15 @@ Only the filename changes. Files are never modified.
 
 ## Features
 
-- Content-aware renaming via any LiteLLM-supported provider (OpenAI, OpenRouter, Anthropic, local models)
-- PDF text extraction for text-based documents
-- Vision model support for scanned PDFs and image files
+- Content-aware renaming via any LiteLLM-supported provider (OpenAI, OpenRouter, Anthropic, **Ollama**, local models)
+- Hybrid extraction: text-first for regular PDFs, vision fallback for scans
+- Per-inbox configuration: different templates, languages, and prompts per folder
 - iCloud evicted file handling — auto-downloads stubs via `brctl` before processing (macOS only)
 - Multi-inbox support — configure one or more folders in a single config
 - Configurable output language — extracted metadata returned in any language
 - Dry-run mode to preview renames without touching files
 - Undo the last run with a single command
-- Configurable output template (`{date}_{sender}_{subject}`), file extensions, and system prompt
 - Optional in-place PDF compression after renaming
-
-## Installation
-
-Requires Python 3.12 or newer.
-
-```bash
-pip install renamr
-```
-
-```bash
-uv tool install renamr
-```
 
 ## Quick Start
 
@@ -53,7 +40,7 @@ uv tool install renamr   # or: pip install renamr
 # First-run setup — creates ~/.config/renamr/config.toml
 renamr init
 
-# Set your API key
+# Set your API key (for cloud providers)
 export OPENAI_API_KEY="your-key"
 
 # Preview renames
@@ -77,25 +64,29 @@ renamr run --inbox ~/Documents/inbox --dry-run
 `renamr init` creates `~/.config/renamr/config.toml` by default. On Linux, `XDG_CONFIG_HOME`
 is respected, so the actual path becomes `$XDG_CONFIG_HOME/renamr/config.toml` when set.
 
-The full set of options:
+### New `[[inbox]]` Format
+
+The config uses TOML array-of-tables syntax for per-inbox settings:
 
 ```toml
-inbox_paths = ["/path/to/your/folder"]
+# Global defaults (used when not overridden per inbox)
 language = "en"
-file_extensions = [".pdf", ".jpg", ".jpeg", ".png", ".txt"]
-recursive = false
 filename_template = "{date}_{sender}_{subject}"
-# rename_prompt = "..."  # override the system prompt sent to the model
+
+[[inbox]]
+path = "/Users/you/Documents/Invoices"
+
+[[inbox]]
+path = "/Users/you/Documents/Scans"
+filename_template = "{date}_{subject}"
+language = "de"
+rename_prompt = "Extract only date and subject. Ignore sender."
 
 [llm]
 model = "gpt-4o-mini"
-api_base = ""        # leave empty for direct OpenAI; set for OpenRouter or local endpoints
-temperature = 0.2
-max_retries = 2
-timeout = 60
 
 [compress]
-enabled = false      # re-render PDFs at lower DPI after renaming
+enabled = false
 dpi = 150
 jpeg_quality = 80
 
@@ -104,20 +95,60 @@ level = "WARNING"
 json_logs = false
 ```
 
-Set `logging.level = "WARNING"` to keep routine CLI output quiet. Use `renamr run --verbose`
-only when you want debug logging for troubleshooting.
+Each `[[inbox]]` section represents one folder. Missing fields fall back to global defaults:
 
-`inbox_paths` accepts one or more folders. `renamr run` processes all of them in one pass.
-Use `--inbox /some/folder` for a one-off override without editing the config.
+- `filename_template` — optional override
+- `language` — optional override
+- `rename_prompt` — optional override
 
-`filename_template` supports three placeholders: `{date}`, `{sender}`, `{subject}`. Changing
-the order does not affect metadata extraction — the model still returns the same fields, and
-renamr only changes how they are assembled into the final filename.
+`file_extensions` and `recursive` remain global (no per-inbox override).
 
-`undo.json` is stored next to the config file. With the default setup, that means
-`~/.config/renamr/undo.json`.
+### Legacy Format
 
-**Switching providers.** Change `model` and set `api_base`. For OpenRouter:
+The old `inbox_paths = ["/path/one", "/path/two"]` format is still supported but deprecated:
+
+```toml
+# DEPRECATED - still works but will be removed in a future version
+inbox_paths = ["/path/to/folder"]
+language = "en"
+filename_template = "{date}_{sender}_{subject}"
+```
+
+## Ollama Setup
+
+Run renamr completely offline with a local Ollama instance.
+
+**1. Install Ollama**
+
+```bash
+# macOS
+brew install ollama
+
+# Or download from https://ollama.com
+```
+
+**2. Pull a vision-capable model**
+
+```bash
+ollama pull gemma4:e2b
+```
+
+**3. Configure renamr**
+
+```toml
+[llm]
+model = "ollama/gemma4:e2b"
+api_base = "http://localhost:11434"
+temperature = 0.2
+```
+
+That's it. Files are processed locally with no external API calls.
+
+> **Note:** Ollama must be running (`ollama serve`) before you run renamr.
+
+## Cloud Providers
+
+Change `model` and set `api_base`. For OpenRouter:
 
 ```toml
 [llm]
@@ -127,12 +158,42 @@ api_base = "https://openrouter.ai/api/v1"
 
 Then set `OPENROUTER_API_KEY` instead of `OPENAI_API_KEY`. Any provider supported by LiteLLM works without code changes.
 
-**Customizing the prompt.** The default system prompt extracts sender, subject, and date from documents and handles German and English. To override, uncomment `rename_prompt` in `config.toml` and replace it with your own. The full default is in `src/renamr/models.py`.
+### Custom Prompt
+
+The default system prompt extracts sender, subject, and date from documents and handles German and English. To override, add a `rename_prompt` field to your config (globally or per-inbox):
+
+```toml
+[[inbox]]
+path = "/Users/you/Documents/Receipts"
+rename_prompt = """
+Extract only the total amount and date from this receipt.
+Return JSON: {"sender":"Store Name","subject":"Receipt $AMOUNT","date":"YYYY-MM-DD"}
+"""
+```
+
+The full default prompt is in `src/renamr/models.py`.
+
+## CLI Reference
+
+```
+renamr init [--config PATH]     Create a config file interactively
+renamr run [--config PATH]      Process files and rename them
+  --dry-run                     Preview without renaming
+  --inbox PATH                  Override inbox folder
+  --recursive / --no-recursive  Override recursive setting
+  --compress / --no-compress    Override compression setting
+  --verbose                     Enable debug logging
+renamr undo [--config PATH]     Undo the last successful run
+renamr version                  Print version
+```
+
+`undo.json` is stored next to the config file. With the default setup, that means
+`~/.config/renamr/undo.json`.
 
 ## Privacy & Security
 
 > [!WARNING]
-> **renamr sends file content to an external LLM API.**
+> **renamr sends file content to an LLM API.**
 >
 > Depending on your configuration, this includes:
 > - Extracted text from PDF and `.txt` files
@@ -140,9 +201,12 @@ Then set `OPENROUTER_API_KEY` instead of `OPENAI_API_KEY`. Any provider supporte
 > - Raw image data from `.jpg`, `.png`, and other supported image files
 > - Original filenames and file timestamps
 >
-> This data is transmitted to your configured LLM provider and may be processed on remote servers. **Do not run renamr on sensitive or confidential files unless you have reviewed and accepted your provider's data handling policy.**
+> When using **cloud providers**, this data is transmitted to remote servers. **Do not run renamr on sensitive or confidential files unless you have reviewed and accepted your provider's data handling policy.**
+
+> [!NOTE]
+> **Local models (Ollama) process files entirely on your machine.**
 >
-> Run `renamr run --dry-run` first to confirm which files will be processed.
+> When configured with a local Ollama instance, no file content leaves your computer. This is the recommended setup for sensitive documents.
 
 Additional notes:
 

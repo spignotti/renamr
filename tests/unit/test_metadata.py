@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import renamr.metadata as metadata_module
 from renamr.metadata import _parse_date_string, _parse_metadata, extract_metadata
-from renamr.models import AppConfig
+from renamr.models import AppConfig, InboxConfig
 
 
 def test_parse_metadata_handles_valid_json_and_fallbacks() -> None:
@@ -58,12 +58,12 @@ def test_extract_metadata_prepends_language_instruction(monkeypatch) -> None:
         created_at=datetime(2024, 1, 31),
         preview_text="invoice",
         image_base64=None,
-        config=AppConfig(language="de"),
+        language="de",
+        rename_prompt="Extract sender, subject, date from this document.",
+        llm_config=AppConfig(inbox=[InboxConfig(path="/test")]).llm,
     )
 
     messages = captured["messages"]
     assert isinstance(messages, list)
     assert messages[0]["role"] == "system"
-    assert messages[0]["content"].startswith(
-        "Language for all extracted metadata values: de\n\n"
-    )
+    assert messages[0]["content"].startswith("Language for all extracted metadata values: de\n\n")

@@ -12,7 +12,7 @@ from rich.table import Table
 
 from renamr import __version__
 from renamr.logging import setup_logging
-from renamr.models import load_config
+from renamr.models import InboxConfig, load_config
 from renamr.renamer import RunSummary, undo_last_run
 from renamr.renamer import run as run_pipeline
 
@@ -54,18 +54,39 @@ def init(
     language = typer.prompt("Language for extracted metadata", default="en")
     model = typer.prompt("LLM model", default="gpt-4o-mini")
 
-    config_path.write_text(
-        "\n".join(
-            [
-                f'inbox_paths = ["{inbox_path}"]',
-                f'language = "{language}"',
-                "",
-                "[llm]",
-                f'model = "{model}"',
-                "",
-            ]
-        )
-    )
+    config_content = f'''# Global defaults (can be overridden per inbox below)
+language = "{language}"
+filename_template = "{{date}}_{{sender}}_{{subject}}"
+
+[[inbox]]
+path = "{inbox_path}"
+
+[llm]
+model = "{model}"
+# api_base = ""  # for OpenRouter or local Ollama: http://localhost:11434
+
+# Example: Multiple inboxes with different settings
+# [[inbox]]
+# path = "/Users/you/Documents/Invoices"
+# filename_template = "{{date}}_{{sender}}_{{subject}}"
+# language = "de"
+#
+# [[inbox]]
+# path = "/Users/you/Documents/Scans"
+# filename_template = "{{date}}_{{subject}}"
+# rename_prompt = "Extract only date and subject. Ignore sender."
+
+[compress]
+enabled = false
+dpi = 150
+jpeg_quality = 80
+
+[logging]
+level = "WARNING"
+json_logs = false
+'''
+
+    config_path.write_text(config_content)
     typer.echo(f"Created {config_path}")
     typer.echo(f"Ensured {config_path.parent} exists")
 
@@ -86,7 +107,10 @@ def run(
         raise typer.Exit(code=1)
     app_config = load_config(config_path)
     if inbox is not None:
-        app_config = app_config.model_copy(update={"inbox_paths": [str(inbox)]})
+        # Override with single inbox using CLI path
+        app_config = app_config.model_copy(
+            update={"inboxes": [InboxConfig(path=str(inbox))]}
+        )
     if recursive is not None:
         app_config = app_config.model_copy(update={"recursive": recursive})
     if compress is None:
