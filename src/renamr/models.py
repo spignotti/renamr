@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import tomllib
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+import structlog
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+logger = structlog.get_logger(__name__)
 
 DEFAULT_RENAME_PROMPT = """
 ---
@@ -90,6 +95,40 @@ Example C - Scanned image, no readable date:
 """.strip()
 
 
+@dataclass(frozen=True)
+class EffectiveInboxConfig:
+    """Resolved configuration for a single inbox (global defaults + overrides)."""
+
+    path: Path
+    filename_template: str
+    language: str
+    rename_prompt: str
+
+
+class InboxConfig(BaseModel):
+    """Per-inbox configuration with optional override fields."""
+
+    path: str
+    filename_template: str | None = None
+    language: str | None = None
+    rename_prompt: str | None = None
+
+    @field_validator("filename_template")
+    @classmethod
+    def validate_filename_template(cls, value: str | None) -> str | None:
+        """Reject templates that reference unsupported placeholders."""
+        if value is None:
+            return None
+        try:
+            value.format(date="x", sender="x", subject="x")
+        except KeyError as exc:
+            placeholder = exc.args[0]
+            raise ValueError(
+                f"filename_template contains unknown placeholder: {placeholder}"
+            ) from exc
+        return value
+
+
 class LoggingConfig(BaseModel):
     """Logging-related configuration."""
 
@@ -118,14 +157,22 @@ class CompressConfig(BaseModel):
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
-    inbox_paths: list[str] = Field(default_factory=lambda: ["."])
+    # Global defaults for all inboxes
+    language: str = Field(default="en")
+    filename_template: str = Field(default="{date}_{sender}_{subject}")
+    rename_prompt: str = Field(default=DEFAULT_RENAME_PROMPT)
+
+    # Per-inbox configuration (replaces inbox_paths)
+    inboxes: list[InboxConfig] = Field(default_factory=list)
+
+    # Legacy field for backwards compatibility (deprecated)
+    inbox_paths: list[str] = Field(default_factory=list)
+
+    # Other global settings
     file_extensions: list[str] = Field(
         default_factory=lambda: [".pdf", ".jpg", ".jpeg", ".png", ".txt"]
     )
     recursive: bool = Field(default=False)
-    language: str = Field(default="en")
-    filename_template: str = Field(default="{date}_{sender}_{subject}")
-    rename_prompt: str = Field(default=DEFAULT_RENAME_PROMPT)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     compress: CompressConfig = Field(default_factory=CompressConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
@@ -143,11 +190,44 @@ class AppConfig(BaseModel):
             ) from exc
         return value
 
+    def get_effective_config(self, inbox: InboxConfig) -> EffectiveInboxConfig:
+        """Merge global defaults with inbox-specific overrides."""
+        return EffectiveInboxConfig(
+            path=Path(inbox.path).expanduser().resolve(),
+            filename_template=inbox.filename_template or self.filename_template,
+            language=inbox.language or self.language,
+            rename_prompt=inbox.rename_prompt or self.rename_prompt,
+        )
+
+    @model_validator(mode="after")
+    def validate_inboxes(self) -> AppConfig:
+        """Ensure at least one inbox is configured (legacy or new format)."""
+        if not self.inboxes and not self.inbox_paths:
+            raise ValueError("At least one inbox must be configured")
+        return self
+
 
 def load_config(path: Path) -> AppConfig:
-    """Load TOML config from disk and merge with model defaults."""
+    """Load TOML config from disk and merge with model defaults.
+
+    Handles backwards compatibility for legacy inbox_paths format.
+    """
     raw_config: dict[str, Any] = {}
     if path.exists():
         with path.open("rb") as file_handle:
             raw_config = tomllib.load(file_handle)
+
+    # Handle backwards compatibility for legacy inbox_paths
+    if raw_config.get("inbox_paths") and not raw_config.get("inboxes"):
+        warnings.warn(
+            "inbox_paths is deprecated and will be removed in a future version. "
+            "Use [[inbox]] sections instead. See README for migration guide.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # Convert legacy inbox_paths to new inboxes format
+        raw_config["inboxes"] = [
+            {"path": p} for p in raw_config["inbox_paths"]
+        ]
+
     return AppConfig.model_validate(raw_config)
