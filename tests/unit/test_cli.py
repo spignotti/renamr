@@ -37,7 +37,8 @@ def test_init_creates_config_from_package_data(tmp_path: Path, monkeypatch) -> N
     config_path = config_dir / "config.toml"
     assert config_path.exists()
     content = config_path.read_text()
-    assert f'inbox_paths = ["{inbox.resolve()}"]' in content
+    assert '[[inbox]]' in content
+    assert f'path = "{inbox.resolve()}"' in content
     assert 'language = "en"' in content
     assert result.stdout.count(str(config_path)) == 1
 
@@ -73,7 +74,7 @@ def test_run_dry_run_does_not_rename_files(tmp_path: Path, monkeypatch) -> None:
     original_file = inbox / "note.txt"
     original_file.write_text("Invoice Date 2024-01-31")
     (tmp_path / "config.toml").write_text(
-        f'inbox_paths = ["{inbox}"]\nfile_extensions = [".txt"]\n'
+        f'[[inbox]]\npath = "{inbox}"\nfile_extensions = [".txt"]\n'
     )
 
     monkeypatch.setattr(

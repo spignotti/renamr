@@ -157,14 +157,16 @@ class CompressConfig(BaseModel):
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
+    model_config = {"populate_by_name": True}
+
     # Global defaults for all inboxes
     language: str = Field(default="en")
     filename_template: str = Field(default="{date}_{sender}_{subject}")
     rename_prompt: str = Field(default=DEFAULT_RENAME_PROMPT)
 
     # Per-inbox configuration (replaces inbox_paths)
-    # TOML array-of-tables [[inbox]] creates key "inbox", so use validation_alias
-    inboxes: list[InboxConfig] = Field(default_factory=list, validation_alias="inbox")
+    # TOML array-of-tables [[inbox]] creates key "inbox", so alias maps it
+    inboxes: list[InboxConfig] = Field(default_factory=list, alias="inbox")
 
     # Legacy field for backwards compatibility (deprecated)
     inbox_paths: list[str] = Field(default_factory=list)
