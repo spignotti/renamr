@@ -9,7 +9,7 @@ import pytest
 
 import renamr.renamer as renamer_module
 from renamr.metadata import FileMetadata
-from renamr.models import AppConfig
+from renamr.models import AppConfig, InboxConfig
 from renamr.renamer import run
 
 
@@ -35,7 +35,10 @@ def test_run_renames_files_from_multiple_inboxes(tmp_path: Path, monkeypatch) ->
     )
 
     config = AppConfig(
-        inbox_paths=[str(inbox_a), str(inbox_b)],
+        inboxes=[
+            InboxConfig(path=str(inbox_a)),
+            InboxConfig(path=str(inbox_b)),
+        ],
         file_extensions=[".txt"],
     )
     summary = run(config, dry_run=False, compress=False, data_dir=tmp_path / "data")
@@ -46,7 +49,7 @@ def test_run_renames_files_from_multiple_inboxes(tmp_path: Path, monkeypatch) ->
 
 
 def test_run_raises_for_missing_inbox(tmp_path: Path) -> None:
-    config = AppConfig(inbox_paths=[str(tmp_path / "missing")])
+    config = AppConfig(inboxes=[InboxConfig(path=str(tmp_path / "missing"))])
 
     with pytest.raises(FileNotFoundError, match="Inbox path does not exist"):
         run(config, dry_run=True, compress=False, data_dir=tmp_path / "data")
@@ -55,7 +58,12 @@ def test_run_raises_for_missing_inbox(tmp_path: Path) -> None:
 def test_run_raises_when_any_inbox_is_missing(tmp_path: Path) -> None:
     existing = tmp_path / "existing"
     existing.mkdir()
-    config = AppConfig(inbox_paths=[str(existing), str(tmp_path / "missing")])
+    config = AppConfig(
+        inboxes=[
+            InboxConfig(path=str(existing)),
+            InboxConfig(path=str(tmp_path / "missing")),
+        ]
+    )
 
     with pytest.raises(FileNotFoundError, match="Inbox path does not exist"):
         run(config, dry_run=True, compress=False, data_dir=tmp_path / "data")
