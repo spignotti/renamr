@@ -60,12 +60,10 @@ def test_extract_metadata_prepends_language_instruction(monkeypatch) -> None:
         image_base64=None,
         language="de",
         rename_prompt="Extract sender, subject, date from this document.",
-        llm_config=AppConfig(inboxes=[InboxConfig(path="/test")]).llm,
+        llm_config=AppConfig(inbox=[InboxConfig(path="/test")]).llm,
     )
 
     messages = captured["messages"]
     assert isinstance(messages, list)
     assert messages[0]["role"] == "system"
-    assert messages[0]["content"].startswith(
-        "Language for all extracted metadata values: de\n\n"
-    )
+    assert messages[0]["content"].startswith("Language for all extracted metadata values: de\n\n")

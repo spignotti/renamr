@@ -14,7 +14,7 @@ from renamr.models import AppConfig, InboxConfig, load_config
 def test_filename_template_accepts_supported_placeholders() -> None:
     config = AppConfig(
         filename_template="{date}_{subject}",
-        inboxes=[InboxConfig(path="/test")],
+        inbox=[InboxConfig(path="/test")],
     )
 
     assert config.filename_template == "{date}_{subject}"
@@ -24,12 +24,12 @@ def test_filename_template_rejects_unknown_placeholders() -> None:
     with pytest.raises(ValidationError, match="unknown placeholder: project"):
         AppConfig(
             filename_template="{date}_{project}",
-            inboxes=[InboxConfig(path="/test")],
+            inbox=[InboxConfig(path="/test")],
         )
 
 
 def test_logging_defaults_to_warning_and_plain_text() -> None:
-    config = AppConfig(inboxes=[InboxConfig(path="/test")])
+    config = AppConfig(inbox=[InboxConfig(path="/test")])
 
     assert config.logging.level == "WARNING"
     assert config.logging.json_logs is False
@@ -42,7 +42,7 @@ class TestInboxConfigMerge:
         config = AppConfig(
             language="en",
             filename_template="{date}_{subject}",
-            inboxes=[InboxConfig(path="/test/path")],
+            inbox=[InboxConfig(path="/test/path")],
         )
         effective = config.get_effective_config(config.inboxes[0])
 
@@ -53,7 +53,7 @@ class TestInboxConfigMerge:
     def test_inbox_overrides_global_language(self) -> None:
         config = AppConfig(
             language="en",
-            inboxes=[InboxConfig(path="/test", language="de")],
+            inbox=[InboxConfig(path="/test", language="de")],
         )
         effective = config.get_effective_config(config.inboxes[0])
 
@@ -62,7 +62,7 @@ class TestInboxConfigMerge:
     def test_inbox_overrides_global_filename_template(self) -> None:
         config = AppConfig(
             filename_template="{date}_{subject}",
-            inboxes=[InboxConfig(path="/test", filename_template="{date}_{sender}")],
+            inbox=[InboxConfig(path="/test", filename_template="{date}_{sender}")],
         )
         effective = config.get_effective_config(config.inboxes[0])
 
@@ -71,7 +71,7 @@ class TestInboxConfigMerge:
     def test_inbox_overrides_global_rename_prompt(self) -> None:
         config = AppConfig(
             rename_prompt="Global prompt",
-            inboxes=[InboxConfig(path="/test", rename_prompt="Custom prompt")],
+            inbox=[InboxConfig(path="/test", rename_prompt="Custom prompt")],
         )
         effective = config.get_effective_config(config.inboxes[0])
 
@@ -82,7 +82,7 @@ class TestInboxConfigMerge:
             language="en",
             filename_template="{date}_{subject}",
             rename_prompt="Global prompt",
-            inboxes=[InboxConfig(path="/test", language="de")],
+            inbox=[InboxConfig(path="/test", language="de")],
         )
         effective = config.get_effective_config(config.inboxes[0])
 
@@ -91,7 +91,7 @@ class TestInboxConfigMerge:
         assert effective.rename_prompt == "Global prompt"  # global
 
     def test_path_is_expanded_and_resolved(self, tmp_path: Path) -> None:
-        config = AppConfig(inboxes=[InboxConfig(path=str(tmp_path))])
+        config = AppConfig(inbox=[InboxConfig(path=str(tmp_path))])
         effective = config.get_effective_config(config.inboxes[0])
 
         assert effective.path == tmp_path.resolve()
@@ -102,10 +102,7 @@ class TestBackwardsCompatibility:
 
     def test_legacy_inbox_paths_converts_to_inboxes(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.toml"
-        config_file.write_text(
-            'inbox_paths = ["/path/one", "/path/two"]\n'
-            'language = "en"\n'
-        )
+        config_file.write_text('inbox_paths = ["/path/one", "/path/two"]\nlanguage = "en"\n')
 
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
@@ -129,11 +126,7 @@ class TestBackwardsCompatibility:
 
     def test_new_inbox_format_takes_precedence_over_legacy(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.toml"
-        config_file.write_text(
-            'inbox_paths = ["/legacy"]\n'
-            '[[inbox]]\n'
-            'path = "/new"\n'
-        )
+        config_file.write_text('inbox_paths = ["/legacy"]\n[[inbox]]\npath = "/new"\n')
 
         with warnings.catch_warnings(record=True) as warning_list:
             warnings.simplefilter("always")
@@ -141,8 +134,7 @@ class TestBackwardsCompatibility:
 
         # No deprecation warning from our code when inboxes is present
         inbox_path_warnings = [
-            w for w in warning_list
-            if "inbox_paths is deprecated" in str(w.message)
+            w for w in warning_list if "inbox_paths is deprecated" in str(w.message)
         ]
         assert len(inbox_path_warnings) == 0
         assert len(config.inboxes) == 1
