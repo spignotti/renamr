@@ -163,7 +163,8 @@ class AppConfig(BaseModel):
     rename_prompt: str = Field(default=DEFAULT_RENAME_PROMPT)
 
     # Per-inbox configuration (replaces inbox_paths)
-    inboxes: list[InboxConfig] = Field(default_factory=list)
+    # TOML array-of-tables [[inbox]] creates key "inbox", so use validation_alias
+    inboxes: list[InboxConfig] = Field(default_factory=list, validation_alias="inbox")
 
     # Legacy field for backwards compatibility (deprecated)
     inbox_paths: list[str] = Field(default_factory=list)
@@ -218,15 +219,16 @@ def load_config(path: Path) -> AppConfig:
             raw_config = tomllib.load(file_handle)
 
     # Handle backwards compatibility for legacy inbox_paths
-    if raw_config.get("inbox_paths") and not raw_config.get("inboxes"):
+    # Note: TOML [[inbox]] creates key "inbox" (singular), not "inboxes"
+    if raw_config.get("inbox_paths") and not raw_config.get("inbox"):
         warnings.warn(
             "inbox_paths is deprecated and will be removed in a future version. "
             "Use [[inbox]] sections instead. See README for migration guide.",
             DeprecationWarning,
             stacklevel=2,
         )
-        # Convert legacy inbox_paths to new inboxes format
-        raw_config["inboxes"] = [
+        # Convert legacy inbox_paths to new inbox format (TOML [[inbox]] key)
+        raw_config["inbox"] = [
             {"path": p} for p in raw_config["inbox_paths"]
         ]
 
