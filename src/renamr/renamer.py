@@ -17,11 +17,11 @@ from renamr.files import (
     select_date_prefix,
 )
 from renamr.metadata import extract_metadata
-from renamr.models import AppConfig
+from renamr.models import AppConfig, EffectiveInboxConfig
 from renamr.preview import (
     compress_pdf,
     encode_image_base64,
-    extract_text_preview,
+    extract_content,
     is_image_file,
     render_pdf_page,
 )
@@ -74,26 +74,29 @@ def scan_files(inbox: Path, extensions: list[str], recursive: bool) -> list[Path
     ]
 
 
-def process_file(filepath: Path, config: AppConfig, dry_run: bool) -> RenameResult:
+def process_file(
+    filepath: Path, effective_config: EffectiveInboxConfig, app_config: AppConfig, dry_run: bool
+) -> RenameResult:
     """Extract metadata, build a filename, and optionally rename the file."""
     try:
         stat = filepath.stat()
         created_at = datetime.fromtimestamp(getattr(stat, "st_birthtime", stat.st_mtime), tz=UTC)
-        preview_text = extract_text_preview(filepath)
-        image_base64 = _get_image_payload(filepath, preview_text)
+        preview_text, image_base64 = extract_content(filepath)
         metadata = extract_metadata(
             filename=filepath.name,
             created_at=created_at,
             preview_text=preview_text,
             image_base64=image_base64,
-            config=config,
+            language=effective_config.language,
+            rename_prompt=effective_config.rename_prompt,
+            llm_config=app_config.llm,
         )
         new_name = build_filename(
             date_prefix=select_date_prefix(metadata.document_date, created_at.date()),
             sender=metadata.sender,
             subject=metadata.subject,
             extension=filepath.suffix.lower(),
-            template=config.filename_template,
+            template=effective_config.filename_template,
             filename_format=metadata.filename_format,
         )
         if dry_run:
@@ -106,16 +109,23 @@ def process_file(filepath: Path, config: AppConfig, dry_run: bool) -> RenameResu
 
 def run(config: AppConfig, dry_run: bool, compress: bool, data_dir: Path) -> RunSummary:
     """Run the rename pipeline over configured files."""
-    inboxes = [Path(path_str) for path_str in config.inbox_paths]
-    for inbox in inboxes:
-        if not inbox.exists():
-            raise FileNotFoundError(f"Inbox path does not exist: {inbox}")
-
     results: list[RenameResult] = []
-    for inbox in inboxes:
-        results.extend(_download_stub(stub) for stub in _scan_icloud_stubs(inbox, config.recursive))
-        filepaths = scan_files(inbox, config.file_extensions, config.recursive)
-        results.extend(process_file(path, config, dry_run) for path in filepaths)
+
+    for inbox_config in config.inboxes:
+        effective_config = config.get_effective_config(inbox_config)
+
+        if not effective_config.path.exists():
+            raise FileNotFoundError(f"Inbox path does not exist: {effective_config.path}")
+
+        results.extend(
+            _download_stub(stub)
+            for stub in _scan_icloud_stubs(effective_config.path, config.recursive)
+        )
+        filepaths = scan_files(effective_config.path, config.file_extensions, config.recursive)
+        results.extend(
+            process_file(path, effective_config, config, dry_run) for path in filepaths
+        )
+
     if compress and not dry_run:
         _compress_renamed_pdfs(results, config)
     if not dry_run:

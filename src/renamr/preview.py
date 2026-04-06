@@ -122,6 +122,75 @@ def compress_pdf(src: Path, dest: Path, dpi: int = 150, jpeg_quality: int = 80) 
     return True
 
 
+def extract_content(filepath: Path) -> tuple[str, str | None]:
+    """Extract content from a file using text-first, vision-fallback strategy.
+
+    Returns a tuple of (extracted_text, image_base64 | None).
+    - For text files: returns (text, None)
+    - For PDFs with text: returns (text, None)
+    - For PDFs without text (scans): returns ("", image_base64)
+    - For images: returns ("", image_base64)
+    """
+    suffix = filepath.suffix.lower()
+
+    # Text files: read directly
+    if suffix == ".txt":
+        try:
+            text = filepath.read_text(errors="ignore")
+            return (text, None)
+        except OSError as exc:
+            logger.warning("text_read_failed", path=str(filepath), error=str(exc))
+            return ("", None)
+
+    # Image files: encode to base64
+    if is_image_file(filepath):
+        image_base64 = encode_image_base64(filepath)
+        return ("", image_base64)
+
+    # PDF files: try text extraction first, fall back to image rendering
+    if suffix == ".pdf":
+        text = _extract_pdf_text(filepath)
+        if text.strip():
+            return (text, None)
+
+        # No text found - treat as scan, render to image
+        temp_image = render_pdf_page(filepath)
+        if temp_image is None:
+            return ("", None)
+        try:
+            image_base64 = encode_image_base64(temp_image)
+            return ("", image_base64)
+        finally:
+            temp_image.unlink(missing_ok=True)
+
+    # Unsupported file type
+    return ("", None)
+
+
+def _extract_pdf_text(filepath: Path, max_chars: int = 1000) -> str:
+    """Extract text from a PDF using pypdf."""
+    for attempt in range(3):
+        try:
+            reader = PdfReader(str(filepath))
+            text_parts = []
+            for page in reader.pages:
+                page_text = page.extract_text() or ""
+                text_parts.append(page_text)
+                if len("".join(text_parts)) >= max_chars:
+                    break
+            return "".join(text_parts)[:max_chars]
+        except OSError as exc:
+            if exc.errno == errno.EDEADLK and attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            logger.warning("pdf_text_extraction_failed", path=str(filepath), error=str(exc))
+            return ""
+        except Exception as exc:
+            logger.warning("pdf_text_extraction_failed", path=str(filepath), error=str(exc))
+            return ""
+    return ""
+
+
 def _to_rgb(image: Image.Image) -> Image.Image:
     """Convert a Pillow image into RGB with alpha flattened to white."""
     if image.mode in {"RGBA", "LA"}:
