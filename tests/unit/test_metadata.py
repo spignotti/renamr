@@ -60,7 +60,11 @@ def test_extract_metadata_prepends_language_instruction(monkeypatch) -> None:
         image_base64=None,
         language="de",
         rename_prompt="Extract sender, subject, date from this document.",
-        llm_config=AppConfig(inbox=[InboxConfig(path="/test")]).llm,
+        model=AppConfig(inbox=[InboxConfig(path="/test")]).llm.model,
+        api_base=AppConfig(inbox=[InboxConfig(path="/test")]).llm.api_base,
+        temperature=AppConfig(inbox=[InboxConfig(path="/test")]).llm.temperature,
+        max_retries=AppConfig(inbox=[InboxConfig(path="/test")]).llm.max_retries,
+        timeout=AppConfig(inbox=[InboxConfig(path="/test")]).llm.timeout,
     )
 
     messages = captured["messages"]

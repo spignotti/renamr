@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from renamr.models import AppConfig, InboxConfig, load_config
+from renamr.models import AppConfig, InboxConfig, LLMConfig, load_config
 
 
 def test_filename_template_accepts_supported_placeholders() -> None:
@@ -95,6 +95,55 @@ class TestInboxConfigMerge:
         effective = config.get_effective_config(config.inboxes[0])
 
         assert effective.path == tmp_path.resolve()
+
+    def test_inbox_uses_global_model_when_no_override(self) -> None:
+        config = AppConfig(
+            inbox=[InboxConfig(path="/test")],
+            llm=LLMConfig(model="gpt-4o", api_base="https://api.openai.com"),
+        )
+        effective = config.get_effective_config(config.inboxes[0])
+
+        assert effective.model == "gpt-4o"
+        assert effective.api_base == "https://api.openai.com"
+
+    def test_inbox_overrides_global_model(self) -> None:
+        config = AppConfig(
+            inbox=[InboxConfig(path="/test", model="ollama/llama3")],
+            llm=LLMConfig(model="gpt-4o", api_base="https://api.openai.com"),
+        )
+        effective = config.get_effective_config(config.inboxes[0])
+
+        assert effective.model == "ollama/llama3"
+
+    def test_inbox_overrides_global_api_base(self) -> None:
+        config = AppConfig(
+            inbox=[InboxConfig(path="/test", api_base="http://localhost:11434")],
+            llm=LLMConfig(model="gpt-4o", api_base="https://api.openai.com"),
+        )
+        effective = config.get_effective_config(config.inboxes[0])
+
+        assert effective.api_base == "http://localhost:11434"
+        assert effective.model == "gpt-4o"  # global fallback
+
+    def test_inbox_model_partial_override_uses_global(self) -> None:
+        config = AppConfig(
+            inbox=[InboxConfig(path="/test", model="ollama/llama3")],
+            llm=LLMConfig(model="gpt-4o", api_base="https://api.openai.com"),
+        )
+        effective = config.get_effective_config(config.inboxes[0])
+
+        assert effective.model == "ollama/llama3"  # overridden
+        assert effective.api_base == "https://api.openai.com"  # global fallback
+
+    def test_inbox_api_base_none_uses_global(self) -> None:
+        """Test that explicit None in api_base falls back to global."""
+        config = AppConfig(
+            inbox=[InboxConfig(path="/test", api_base=None)],
+            llm=LLMConfig(model="gpt-4o", api_base="https://api.openai.com"),
+        )
+        effective = config.get_effective_config(config.inboxes[0])
+
+        assert effective.api_base == "https://api.openai.com"
 
 
 class TestBackwardsCompatibility:

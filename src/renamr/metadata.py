@@ -15,9 +15,6 @@ from pydantic import BaseModel
 from renamr.models import (
     DEFAULT_RENAME_PROMPT as MODELS_DEFAULT_RENAME_PROMPT,
 )
-from renamr.models import (
-    LLMConfig,
-)
 
 logger = structlog.get_logger(__name__)
 DEFAULT_RENAME_PROMPT = MODELS_DEFAULT_RENAME_PROMPT
@@ -39,9 +36,27 @@ def extract_metadata(
     image_base64: str | None,
     language: str,
     rename_prompt: str,
-    llm_config: LLMConfig,
+    model: str,
+    api_base: str | None,
+    temperature: float,
+    max_retries: int,
+    timeout: int,
 ) -> FileMetadata:
-    """Extract rename metadata from preview text and optional document image."""
+    """Extract rename metadata from preview text and optional document image.
+
+    Args:
+        filename: Original file name used as prompt context.
+        created_at: File creation timestamp used as prompt context.
+        preview_text: Text preview extracted from the file.
+        image_base64: Optional base64-encoded image payload for multimodal extraction.
+        language: Language instruction for extracted metadata values.
+        rename_prompt: Prompt instructions for metadata extraction.
+        model: LiteLLM model identifier.
+        api_base: Optional API base URL override.
+        temperature: Sampling temperature for the model call.
+        max_retries: Maximum number of retry attempts after initial failure.
+        timeout: Request timeout in seconds.
+    """
     if not preview_text.strip() and image_base64 is None:
         return FileMetadata(
             sender="Unknown",
@@ -50,30 +65,27 @@ def extract_metadata(
             filename_format="date_subject",
         )
     prompt = _build_user_prompt(filename, created_at, preview_text)
-    system_content = (
-        f"Language for all extracted metadata values: {language}\n\n"
-        f"{rename_prompt}"
-    )
+    system_content = f"Language for all extracted metadata values: {language}\n\n{rename_prompt}"
     messages = [
         {"role": "system", "content": system_content},
         {"role": "user", "content": _build_user_content(prompt, image_base64)},
     ]
-    for attempt in range(llm_config.max_retries + 1):
+    for attempt in range(max_retries + 1):
         try:
             response = completion(
-                model=llm_config.model,
+                model=model,
                 messages=messages,
                 response_format={"type": "json_object"},
-                temperature=llm_config.temperature,
-                api_base=llm_config.api_base,
-                timeout=llm_config.timeout,
+                temperature=temperature,
+                api_base=api_base,
+                timeout=timeout,
             )
             content = cast(Any, response).choices[0].message.content
             if not content:
                 raise ValueError("Empty response content from LiteLLM.")
             return _parse_metadata(content)
         except Exception as exc:
-            if attempt >= llm_config.max_retries:
+            if attempt >= max_retries:
                 logger.exception("metadata_extraction_failed", error=str(exc), filename=filename)
                 raise
             backoff = min(2**attempt, 30)
@@ -188,12 +200,7 @@ def _parse_ambiguous_date(first: str, second: str, year_value: str) -> date | No
 
 def _normalize_umlauts(value: str) -> str:
     """Normalize German umlauts so ASCII month matching works."""
-    return (
-        value.replace("ä", "ae")
-        .replace("ö", "oe")
-        .replace("ü", "ue")
-        .replace("ß", "ss")
-    )
+    return value.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
 
 
 _DATE_MATCHERS = [

@@ -18,6 +18,7 @@ from renamr.files import (
 )
 from renamr.metadata import extract_metadata
 from renamr.models import AppConfig, EffectiveInboxConfig
+from renamr.ollama import ollama_lifecycle
 from renamr.preview import (
     compress_pdf,
     encode_image_base64,
@@ -27,6 +28,11 @@ from renamr.preview import (
 )
 
 UNDO_FILENAME = "undo.json"
+
+
+def _uses_ollama_model(model: str) -> bool:
+    """Check if the model string indicates an Ollama model."""
+    return model.startswith("ollama/")
 
 
 @dataclass(frozen=True)
@@ -89,7 +95,11 @@ def process_file(
             image_base64=image_base64,
             language=effective_config.language,
             rename_prompt=effective_config.rename_prompt,
-            llm_config=app_config.llm,
+            model=effective_config.model,
+            api_base=effective_config.api_base,
+            temperature=app_config.llm.temperature,
+            max_retries=app_config.llm.max_retries,
+            timeout=app_config.llm.timeout,
         )
         new_name = build_filename(
             date_prefix=select_date_prefix(metadata.document_date, created_at.date()),
@@ -111,25 +121,31 @@ def run(config: AppConfig, dry_run: bool, compress: bool, data_dir: Path) -> Run
     """Run the rename pipeline over configured files."""
     results: list[RenameResult] = []
 
-    for inbox_config in config.inboxes:
-        effective_config = config.get_effective_config(inbox_config)
+    # Resolve effective configs and check if Ollama is needed
+    effective_configs = [config.get_effective_config(inbox) for inbox in config.inboxes]
+    needs_ollama = any(_uses_ollama_model(cfg.model) for cfg in effective_configs)
 
-        if not effective_config.path.exists():
-            raise FileNotFoundError(f"Inbox path does not exist: {effective_config.path}")
+    with ollama_lifecycle(config.ollama, needs_ollama):
+        for inbox_config in config.inboxes:
+            effective_config = config.get_effective_config(inbox_config)
 
-        results.extend(
-            _download_stub(stub)
-            for stub in _scan_icloud_stubs(effective_config.path, config.recursive)
-        )
-        filepaths = scan_files(effective_config.path, config.file_extensions, config.recursive)
-        results.extend(
-            process_file(path, effective_config, config, dry_run) for path in filepaths
-        )
+            if not effective_config.path.exists():
+                raise FileNotFoundError(f"Inbox path does not exist: {effective_config.path}")
 
-    if compress and not dry_run:
-        _compress_renamed_pdfs(results, config)
-    if not dry_run:
-        write_undo_log(results, data_dir)
+            results.extend(
+                _download_stub(stub)
+                for stub in _scan_icloud_stubs(effective_config.path, config.recursive)
+            )
+            filepaths = scan_files(effective_config.path, config.file_extensions, config.recursive)
+            results.extend(
+                process_file(path, effective_config, config, dry_run) for path in filepaths
+            )
+
+        if compress and not dry_run:
+            _compress_renamed_pdfs(results, config)
+        if not dry_run:
+            write_undo_log(results, data_dir)
+
     return RunSummary(results)
 
 
