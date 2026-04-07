@@ -18,6 +18,12 @@ path = "/path/to/your/folder"
 # path = "/Users/you/Documents/Scans"
 # filename_template = "{date}_{subject}"
 # rename_prompt = "Extract only date and subject. Ignore sender."
+#
+# Example: Use local Ollama for private documents (overrides global LLM settings)
+# [[inbox]]
+# path = "/Users/you/Documents/Private"
+# model = "ollama/llama3.2"
+# api_base = "http://localhost:11434"
 
 [llm]
 model = "gpt-4o-mini"
@@ -40,3 +46,11 @@ jpeg_quality = 80
 [logging]
 level = "WARNING"
 json_logs = false
+
+# Ollama lifecycle configuration (optional)
+# Controls automatic start/stop of Ollama server when using local models
+[ollama]
+auto_start = false       # Start Ollama automatically when an ollama/ model is configured
+stop_after_run = true    # Stop Ollama after processing completes (only if we started it)
+host = "http://localhost:11434"  # Ollama server URL for health checks
+startup_timeout = 15     # Seconds to wait for Ollama to become ready after starting

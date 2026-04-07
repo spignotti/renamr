@@ -103,6 +103,8 @@ class EffectiveInboxConfig:
     filename_template: str
     language: str
     rename_prompt: str
+    model: str
+    api_base: str | None
 
 
 class InboxConfig(BaseModel):
@@ -112,6 +114,8 @@ class InboxConfig(BaseModel):
     filename_template: str | None = None
     language: str | None = None
     rename_prompt: str | None = None
+    model: str | None = None
+    api_base: str | None = None
 
     @field_validator("filename_template")
     @classmethod
@@ -154,6 +158,15 @@ class CompressConfig(BaseModel):
     jpeg_quality: int = Field(default=80, ge=1, le=100)
 
 
+class OllamaConfig(BaseModel):
+    """Ollama lifecycle configuration."""
+
+    auto_start: bool = Field(default=False)
+    stop_after_run: bool = Field(default=True)
+    host: str = Field(default="http://localhost:11434")
+    startup_timeout: int = Field(default=15, ge=1)
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
@@ -179,6 +192,7 @@ class AppConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     compress: CompressConfig = Field(default_factory=CompressConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    ollama: OllamaConfig = Field(default_factory=OllamaConfig)
 
     @field_validator("filename_template")
     @classmethod
@@ -200,6 +214,8 @@ class AppConfig(BaseModel):
             filename_template=inbox.filename_template or self.filename_template,
             language=inbox.language or self.language,
             rename_prompt=inbox.rename_prompt or self.rename_prompt,
+            model=inbox.model or self.llm.model,
+            api_base=inbox.api_base if inbox.api_base is not None else self.llm.api_base,
         )
 
     @model_validator(mode="after")
@@ -230,8 +246,6 @@ def load_config(path: Path) -> AppConfig:
             stacklevel=2,
         )
         # Convert legacy inbox_paths to new inbox format (TOML [[inbox]] key)
-        raw_config["inbox"] = [
-            {"path": p} for p in raw_config["inbox_paths"]
-        ]
+        raw_config["inbox"] = [{"path": p} for p in raw_config["inbox_paths"]]
 
     return AppConfig.model_validate(raw_config)
