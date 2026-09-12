@@ -40,5 +40,9 @@ htmlcov/
 config.toml
 data/undo.json
 
-# OpenCode local session state (never commit)
+# Project memory (never commit)
+.opencode/project-memory.sqlite3
+.opencode/*.backup-*.sqlite3
+.opencode/project-memory.sqlite3-wal
+.opencode/project-memory.sqlite3-shm
 .opencode/PROJECT_STATE.md
