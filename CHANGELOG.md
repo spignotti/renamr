@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project adheres to Semantic Versioning.
 
+## [1.4.0] - 2026-09-12
+
+
+
+### Added
+
+- **ocr:** Add local OCR extraction with vision fallback (#40)
+
+
+### Maintenance
+
+- Migrate project memory to sqlite (#39)
+
+- **deps:** Bump the minor-patch group across 1 directory with 2 updates (#37)
+
+- **deps:** Bump the minor-patch group across 1 directory with 8 updates (#38)
+
+
 ## [1.3.1] - 2026-09-12
 
 
@@ -12,6 +30,8 @@ and this project adheres to Semantic Versioning.
 ### Maintenance
 
 - Migrate project to published profile with security baseline (#35)
+
+- Release v1.3.1
 
 
 ## [1.3.0] - 2026-04-07
