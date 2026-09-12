@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project adheres to Semantic Versioning.
 
+## [1.3.1] - 2026-09-12
+
+
+
+### Maintenance
+
+- Migrate project to published profile with security baseline (#35)
+
+
 ## [1.3.0] - 2026-04-07
 
 
@@ -12,6 +21,11 @@ and this project adheres to Semantic Versioning.
 ### Added
 
 - Per-inbox model config and ollama lifecycle
+
+
+### Maintenance
+
+- Release v1.3.0
 
 
 ## [1.2.0] - 2026-04-06
