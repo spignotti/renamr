@@ -7,19 +7,13 @@ from pathlib import Path
 import fitz
 from PIL import Image
 
+import renamr.preview as preview_module
+from renamr.ocr import OCRResult
 from renamr.preview import (
     extract_content,
-    extract_text_preview,
     is_image_file,
     render_pdf_page,
 )
-
-
-def test_extract_text_preview_reads_text_file(tmp_path: Path) -> None:
-    text_path = tmp_path / "note.txt"
-    text_path.write_text("hello world")
-
-    assert extract_text_preview(text_path) == "hello world"
 
 
 def test_render_pdf_page_cleans_up_temp_file_on_save_failure(
@@ -48,17 +42,17 @@ def test_render_pdf_page_cleans_up_temp_file_on_save_failure(
     assert not created_paths[0].exists()
 
 
-
 def test_is_image_file_matches_supported_extensions() -> None:
     assert is_image_file(Path("image.jpg")) is True
     assert is_image_file(Path("image.png")) is True
+    assert is_image_file(Path("image.tiff")) is True
     assert is_image_file(Path("image.txt")) is False
 
 
-class TestExtractContent:
-    """Tests for hybrid text-first, vision-fallback extraction."""
+class TestExtractContentTxt:
+    """Tests for text file extraction."""
 
-    def test_extract_content_from_txt_returns_text_only(self, tmp_path: Path) -> None:
+    def test_returns_text_only(self, tmp_path: Path) -> None:
         text_path = tmp_path / "note.txt"
         text_path.write_text("Sample document content")
 
@@ -67,24 +61,14 @@ class TestExtractContent:
         assert text == "Sample document content"
         assert image_base64 is None
 
-    def test_extract_content_from_image_returns_base64_only(self, tmp_path: Path) -> None:
-        image_path = tmp_path / "scan.png"
-        # Create a small test image
-        img = Image.new("RGB", (100, 100), color="white")
-        img.save(image_path)
 
-        text, image_base64 = extract_content(image_path)
+class TestExtractContentPdf:
+    """Tests for PDF extraction."""
 
-        assert text == ""
-        assert image_base64 is not None
-        assert isinstance(image_base64, str)
-
-    def test_extract_content_from_text_pdf_returns_text_only(self, tmp_path: Path) -> None:
-        """PDF with text content should return text, no image."""
+    def test_text_pdf_returns_text_only(self, tmp_path: Path) -> None:
         pdf_path = tmp_path / "document.pdf"
         document = fitz.open()
         page = document.new_page()
-        # Insert text into the PDF
         page.insert_text((50, 50), "This is a text PDF with content")
         document.save(pdf_path)
         document.close()
@@ -94,23 +78,90 @@ class TestExtractContent:
         assert "This is a text PDF" in text
         assert image_base64 is None
 
-    def test_extract_content_from_scan_pdf_returns_image_only(self, tmp_path: Path) -> None:
-        """PDF with no text (image-only) should return empty text and base64 image."""
+    def test_scan_pdf_ocr_usable_returns_text(self, tmp_path: Path, monkeypatch) -> None:
+        """Scan PDF with usable OCR returns text, no image."""
         pdf_path = tmp_path / "scan.pdf"
         document = fitz.open()
-        # Create a page with no text (blank/scan-like)
         document.new_page()
         document.save(pdf_path)
         document.close()
 
+        # Patch ocr_image at the module where it's imported (preview.py)
+        monkeypatch.setattr(
+            preview_module,
+            "ocr_image",
+            lambda _: OCRResult(text="A" * 50, mean_confidence=0.9, line_count=3),
+        )
+
         text, image_base64 = extract_content(pdf_path)
 
-        # Empty text (blank page has no extractable text)
+        assert "A" * 50 in text
+        assert image_base64 is None
+
+    def test_scan_pdf_ocr_unusable_returns_vision(self, tmp_path: Path, monkeypatch) -> None:
+        """Scan PDF with unusable OCR returns first-page vision image."""
+        pdf_path = tmp_path / "scan.pdf"
+        document = fitz.open()
+        document.new_page()
+        document.save(pdf_path)
+        document.close()
+
+        # OCR returns unusable result (too short)
+        monkeypatch.setattr(
+            preview_module,
+            "ocr_image",
+            lambda _: OCRResult(text="Hi", mean_confidence=0.9, line_count=1),
+        )
+
+        text, image_base64 = extract_content(pdf_path)
+
         assert text == ""
-        # Should have an image payload for vision processing
         assert image_base64 is not None
 
-    def test_extract_content_unsupported_extension_returns_empty(self, tmp_path: Path) -> None:
+
+class TestExtractContentImage:
+    """Tests for image file extraction."""
+
+    def test_image_ocr_usable_returns_text(self, tmp_path: Path, monkeypatch) -> None:
+        """Image with usable OCR returns text, no base64."""
+        image_path = tmp_path / "scan.png"
+        img = Image.new("RGB", (100, 100), color="white")
+        img.save(image_path)
+
+        monkeypatch.setattr(
+            preview_module,
+            "ocr_image",
+            lambda _: OCRResult(
+                text="Invoice from ACME Corp for services rendered",
+                mean_confidence=0.95,
+                line_count=2,
+            ),
+        )
+
+        text, image_base64 = extract_content(image_path)
+
+        assert "Invoice from ACME Corp" in text
+        assert image_base64 is None
+
+    def test_image_ocr_unusable_returns_vision(self, tmp_path: Path, monkeypatch) -> None:
+        """Image with unusable OCR returns base64 vision payload."""
+        image_path = tmp_path / "photo.jpg"
+        img = Image.new("RGB", (100, 100), color="white")
+        img.save(image_path)
+
+        # OCR returns nothing useful
+        monkeypatch.setattr(preview_module, "ocr_image", lambda _: None)
+
+        text, image_base64 = extract_content(image_path)
+
+        assert text == ""
+        assert image_base64 is not None
+
+
+class TestExtractContentUnsupported:
+    """Tests for unsupported file types."""
+
+    def test_unsupported_extension_returns_empty(self, tmp_path: Path) -> None:
         doc_path = tmp_path / "document.doc"
         doc_path.write_text("Some content")
 

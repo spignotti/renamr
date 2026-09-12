@@ -105,6 +105,8 @@ class EffectiveInboxConfig:
     rename_prompt: str
     model: str
     api_base: str | None
+    vision_model: str
+    vision_api_base: str | None
 
 
 class InboxConfig(BaseModel):
@@ -116,6 +118,8 @@ class InboxConfig(BaseModel):
     rename_prompt: str | None = None
     model: str | None = None
     api_base: str | None = None
+    vision_model: str | None = None
+    vision_api_base: str | None = None
 
     @field_validator("filename_template")
     @classmethod
@@ -144,10 +148,12 @@ class LLMConfig(BaseModel):
     """LLM provider configuration."""
 
     model: str = Field(default="gpt-4o-mini")
+    vision_model: str | None = None
     api_base: str | None = None
+    vision_api_base: str | None = None
     temperature: float = Field(default=0.2)
     max_retries: int = Field(default=2, ge=0)
-    timeout: int = Field(default=60, ge=1)
+    timeout: int = Field(default=120, ge=1)
 
 
 class CompressConfig(BaseModel):
@@ -186,7 +192,10 @@ class AppConfig(BaseModel):
 
     # Other global settings
     file_extensions: list[str] = Field(
-        default_factory=lambda: [".pdf", ".jpg", ".jpeg", ".png", ".txt"]
+        default_factory=lambda: [
+            ".pdf", ".jpg", ".jpeg", ".png", ".txt",
+            ".tif", ".tiff", ".bmp", ".gif", ".webp",
+        ]
     )
     recursive: bool = Field(default=False)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -209,13 +218,28 @@ class AppConfig(BaseModel):
 
     def get_effective_config(self, inbox: InboxConfig) -> EffectiveInboxConfig:
         """Merge global defaults with inbox-specific overrides."""
+        resolved_model = inbox.model or self.llm.model
+        resolved_api_base = (
+            inbox.api_base if inbox.api_base is not None else self.llm.api_base
+        )
+        # Vision config inherits from text config when not explicitly set
+        resolved_vision_model = inbox.vision_model or self.llm.vision_model or resolved_model
+        resolved_vision_api_base: str | None
+        if inbox.vision_api_base is not None:
+            resolved_vision_api_base = inbox.vision_api_base
+        elif self.llm.vision_api_base is not None:
+            resolved_vision_api_base = self.llm.vision_api_base
+        else:
+            resolved_vision_api_base = resolved_api_base
         return EffectiveInboxConfig(
             path=Path(inbox.path).expanduser().resolve(),
             filename_template=inbox.filename_template or self.filename_template,
             language=inbox.language or self.language,
             rename_prompt=inbox.rename_prompt or self.rename_prompt,
-            model=inbox.model or self.llm.model,
-            api_base=inbox.api_base if inbox.api_base is not None else self.llm.api_base,
+            model=resolved_model,
+            api_base=resolved_api_base,
+            vision_model=resolved_vision_model,
+            vision_api_base=resolved_vision_api_base,
         )
 
     @model_validator(mode="after")

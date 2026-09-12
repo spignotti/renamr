@@ -145,6 +145,88 @@ class TestInboxConfigMerge:
 
         assert effective.api_base == "https://api.openai.com"
 
+    def test_vision_model_inherits_from_text_model(self) -> None:
+        """When no vision_model set, vision_model == model."""
+        config = AppConfig(
+            inbox=[InboxConfig(path="/test")],
+            llm=LLMConfig(model="gpt-4o", api_base="https://api.openai.com"),
+        )
+        effective = config.get_effective_config(config.inboxes[0])
+
+        assert effective.vision_model == "gpt-4o"
+        assert effective.vision_api_base == "https://api.openai.com"
+
+    def test_global_vision_model_overrides_inheritance(self) -> None:
+        """Global vision_model is used when no inbox override."""
+        config = AppConfig(
+            inbox=[InboxConfig(path="/test")],
+            llm=LLMConfig(
+                model="openai/gpt-4o-mini",
+                vision_model="ollama/vision",
+                vision_api_base="http://localhost:11434",
+            ),
+        )
+        effective = config.get_effective_config(config.inboxes[0])
+
+        assert effective.vision_model == "ollama/vision"
+        assert effective.vision_api_base == "http://localhost:11434"
+        assert effective.model == "openai/gpt-4o-mini"
+
+    def test_inbox_vision_model_overrides_global(self) -> None:
+        """Inbox-level vision_model takes priority over global."""
+        config = AppConfig(
+            inbox=[InboxConfig(path="/test", vision_model="openai/gpt-4o")],
+            llm=LLMConfig(
+                model="openai/gpt-4o-mini",
+                vision_model="ollama/vision",
+                vision_api_base="http://localhost:11434",
+            ),
+        )
+        effective = config.get_effective_config(config.inboxes[0])
+
+        assert effective.vision_model == "openai/gpt-4o"
+        assert effective.vision_api_base == "http://localhost:11434"
+
+    def test_vision_api_base_inherits_from_text_api_base(self) -> None:
+        """When no vision_api_base set, inherits from text api_base."""
+        config = AppConfig(
+            inbox=[InboxConfig(path="/test")],
+            llm=LLMConfig(
+                model="openai/gpt-4o-mini",
+                api_base="https://api.openai.com",
+            ),
+        )
+        effective = config.get_effective_config(config.inboxes[0])
+
+        assert effective.vision_api_base == "https://api.openai.com"
+
+    def test_vision_api_base_independent_of_text(self) -> None:
+        """Separate vision endpoint for cloud text + local vision."""
+        config = AppConfig(
+            inbox=[InboxConfig(path="/test")],
+            llm=LLMConfig(
+                model="openai/gpt-4o-mini",
+                api_base="https://api.openai.com",
+                vision_model="ollama/gemma4:e2b",
+                vision_api_base="http://localhost:11434",
+            ),
+        )
+        effective = config.get_effective_config(config.inboxes[0])
+
+        assert effective.model == "openai/gpt-4o-mini"
+        assert effective.api_base == "https://api.openai.com"
+        assert effective.vision_model == "ollama/gemma4:e2b"
+        assert effective.vision_api_base == "http://localhost:11434"
+
+    def test_file_extensions_include_image_formats(self) -> None:
+        """Default file extensions include all supported image formats."""
+        config = AppConfig(inbox=[InboxConfig(path="/test")])
+        assert ".tif" in config.file_extensions
+        assert ".tiff" in config.file_extensions
+        assert ".bmp" in config.file_extensions
+        assert ".gif" in config.file_extensions
+        assert ".webp" in config.file_extensions
+
 
 class TestBackwardsCompatibility:
     """Tests for legacy inbox_paths support."""

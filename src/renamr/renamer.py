@@ -21,10 +21,7 @@ from renamr.models import AppConfig, EffectiveInboxConfig
 from renamr.ollama import ollama_lifecycle
 from renamr.preview import (
     compress_pdf,
-    encode_image_base64,
     extract_content,
-    is_image_file,
-    render_pdf_page,
 )
 
 UNDO_FILENAME = "undo.json"
@@ -97,6 +94,8 @@ def process_file(
             rename_prompt=effective_config.rename_prompt,
             model=effective_config.model,
             api_base=effective_config.api_base,
+            vision_model=effective_config.vision_model,
+            vision_api_base=effective_config.vision_api_base,
             temperature=app_config.llm.temperature,
             max_retries=app_config.llm.max_retries,
             timeout=app_config.llm.timeout,
@@ -123,7 +122,10 @@ def run(config: AppConfig, dry_run: bool, compress: bool, data_dir: Path) -> Run
 
     # Resolve effective configs and check if Ollama is needed
     effective_configs = [config.get_effective_config(inbox) for inbox in config.inboxes]
-    needs_ollama = any(_uses_ollama_model(cfg.model) for cfg in effective_configs)
+    needs_ollama = any(
+        _uses_ollama_model(cfg.model) or _uses_ollama_model(cfg.vision_model)
+        for cfg in effective_configs
+    )
 
     with ollama_lifecycle(config.ollama, needs_ollama):
         for inbox_config in config.inboxes:
@@ -177,21 +179,6 @@ def undo_last_run(data_dir: Path) -> list[tuple[Path, Path]]:
         reversed_pairs.append((new_path, old_path))
     undo_path.unlink()
     return reversed_pairs
-
-
-def _get_image_payload(filepath: Path, preview_text: str) -> str | None:
-    """Return a base64 image payload for image files or image-only PDFs."""
-    if is_image_file(filepath):
-        return encode_image_base64(filepath)
-    if filepath.suffix.lower() != ".pdf" or preview_text.strip():
-        return None
-    temp_image = render_pdf_page(filepath)
-    if temp_image is None:
-        return None
-    try:
-        return encode_image_base64(temp_image)
-    finally:
-        temp_image.unlink(missing_ok=True)
 
 
 def _scan_icloud_stubs(inbox: Path, recursive: bool) -> list[Path]:

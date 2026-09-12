@@ -38,6 +38,8 @@ def extract_metadata(
     rename_prompt: str,
     model: str,
     api_base: str | None,
+    vision_model: str,
+    vision_api_base: str | None,
     temperature: float,
     max_retries: int,
     timeout: int,
@@ -51,8 +53,10 @@ def extract_metadata(
         image_base64: Optional base64-encoded image payload for multimodal extraction.
         language: Language instruction for extracted metadata values.
         rename_prompt: Prompt instructions for metadata extraction.
-        model: LiteLLM model identifier.
-        api_base: Optional API base URL override.
+        model: LiteLLM model identifier for text extraction.
+        api_base: Optional API base URL override for text model.
+        vision_model: LiteLLM model identifier for vision fallback.
+        vision_api_base: Optional API base URL override for vision model.
         temperature: Sampling temperature for the model call.
         max_retries: Maximum number of retry attempts after initial failure.
         timeout: Request timeout in seconds.
@@ -64,6 +68,13 @@ def extract_metadata(
             document_date=None,
             filename_format="date_subject",
         )
+    # Select endpoint: vision payload uses vision_model, text uses model
+    if image_base64 is not None:
+        selected_model = vision_model
+        selected_api_base = vision_api_base
+    else:
+        selected_model = model
+        selected_api_base = api_base
     prompt = _build_user_prompt(filename, created_at, preview_text)
     system_content = f"Language for all extracted metadata values: {language}\n\n{rename_prompt}"
     messages = [
@@ -73,11 +84,11 @@ def extract_metadata(
     for attempt in range(max_retries + 1):
         try:
             response = completion(
-                model=model,
+                model=selected_model,
                 messages=messages,
                 response_format={"type": "json_object"},
                 temperature=temperature,
-                api_base=api_base,
+                api_base=selected_api_base,
                 timeout=timeout,
             )
             content = cast(Any, response).choices[0].message.content
