@@ -82,6 +82,13 @@ def ci(session: nox.Session) -> None:
 
 
 @nox.session
+def security(session: nox.Session) -> None:
+    """Security audit: dependency vulnerabilities + SAST."""
+    run_uv(session, "run", "pip-audit", "--skip-editable")
+    run_uv(session, "run", "ruff", "check", "--select", "S", "src", "tests")
+
+
+@nox.session
 def clean(session: nox.Session) -> None:
     """Clean build artifacts."""
     for raw_path in [".pytest_cache", ".ruff_cache", ".pyright", "htmlcov", ".coverage"]:

@@ -9,11 +9,11 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "litellm>=1.83.0",
-    "pillow>=12.1.1",
+    "litellm>=1.100.1",
+    "pillow>=12.3.0",
     "pydantic>=2.12.5",
     "pymupdf>=1.27.2",
-    "pypdf>=6.9.1",
+    "pypdf>=6.18.1",
     "structlog>=25.5.0",
     "typer>=0.24.1",
 ]
@@ -30,7 +30,7 @@ dev = [
     "nox>=2026.2.9",
     "pip-audit>=2.9.0",
     "pyright>=1.1.408",
-    "pytest>=9.0.2",
+    "pytest>=9.1.1",
     "pytest-cov>=7.0.0",
     "ruff>=0.15.5",
 ]

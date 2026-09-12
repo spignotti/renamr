@@ -33,6 +33,12 @@ htmlcov/
 .nox/
 .uv_cache/
 
+# Herdr
+.herdr/
+
 # Runtime data
 config.toml
 data/undo.json
+
+# OpenCode local session state (never commit)
+.opencode/PROJECT_STATE.md
