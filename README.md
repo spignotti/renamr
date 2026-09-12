@@ -9,7 +9,7 @@ AI-powered CLI that renames files based on their content.
 
 ## What it does
 
-Scanned documents, downloads, and exported files often arrive with useless names like `scan_001.pdf` or `IMG_5847.jpg`. renamr reads each file — extracting text from PDFs, rendering pages as images for vision models, or encoding photos directly — sends a preview to an LLM, and renames the file to a structured format based on the content it actually finds.
+Scanned documents, downloads, and exported files often arrive with useless names like `scan_001.pdf` or `IMG_5847.jpg`. renamr reads each file — running local OCR on images and scans first, falling back to vision models only when OCR fails — sends the extracted text to an LLM, and renames the file to a structured format based on the content it actually finds.
 
 ```
 scan_001.pdf          ->  240115_ACME_Invoice.pdf
@@ -22,7 +22,8 @@ Only the filename changes. Files are never modified.
 ## Features
 
 - Content-aware renaming via any LiteLLM-supported provider (OpenAI, OpenRouter, Anthropic, **Ollama**, local models)
-- Hybrid extraction: text-first for regular PDFs, vision fallback for scans
+- Local OCR-first extraction: images and scans are OCR'd locally before hitting the LLM
+- Optional vision fallback with configurable model for OCR failures
 - Per-inbox configuration: different templates, languages, and prompts per folder
 - iCloud evicted file handling — auto-downloads stubs via `brctl` before processing (macOS only)
 - Multi-inbox support — configure one or more folders in a single config
@@ -127,7 +128,7 @@ brew install ollama
 # Or download from https://ollama.com
 ```
 
-**2. Pull a vision-capable model**
+**2. Pull a model**
 
 ```bash
 ollama pull gemma4:e2b
@@ -157,6 +158,26 @@ api_base = "https://openrouter.ai/api/v1"
 ```
 
 Then set `OPENROUTER_API_KEY` instead of `OPENAI_API_KEY`. Any provider supported by LiteLLM works without code changes.
+
+### Vision Fallback Model
+
+For most files, local OCR extracts text without hitting the LLM at all. When OCR fails (low confidence, too few characters), renamr falls back to a vision model. By default it uses the same model configured in `[llm]`. To use a separate, cheaper, or local model for vision:
+
+```toml
+[llm]
+model = "openai/gpt-4o-mini"            # text extraction (most files never reach this)
+vision_model = "ollama/gemma4:e2b"       # vision fallback (only when OCR fails)
+vision_api_base = "http://localhost:11434"
+```
+
+Both models can also be overridden per inbox:
+
+```toml
+[[inbox]]
+path = "/Users/you/Documents/Scans"
+model = "openai/gpt-4o"
+vision_model = "openai/gpt-4o"
+```
 
 ### Custom Prompt
 
@@ -197,11 +218,13 @@ renamr version                  Print version
 >
 > Depending on your configuration, this includes:
 > - Extracted text from PDF and `.txt` files
-> - Rendered page images from scanned PDFs
-> - Raw image data from `.jpg`, `.png`, and other supported image files
+> - OCR-extracted text from images and scans (processed locally first)
+> - Vision model payloads — only sent when local OCR fails to extract sufficient text
 > - Original filenames and file timestamps
 >
 > When using **cloud providers**, this data is transmitted to remote servers. **Do not run renamr on sensitive or confidential files unless you have reviewed and accepted your provider's data handling policy.**
+>
+> **Tip:** Set `vision_model` to a local Ollama model so that even OCR fallback stays on your machine.
 
 > [!NOTE]
 > **Local models (Ollama) process files entirely on your machine.**

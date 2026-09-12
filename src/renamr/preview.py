@@ -14,40 +14,14 @@ import structlog
 from PIL import Image
 from pypdf import PdfReader
 
+from renamr.ocr import OCRResult, is_usable_ocr, ocr_image
+
 logger = structlog.get_logger(__name__)
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp"}
+_MAX_PREVIEW_CHARS = 1000
 
-
-def extract_text_preview(filepath: Path, max_chars: int = 1000) -> str:
-    """Extract preview text from supported text-based files."""
-    suffix = filepath.suffix.lower()
-    if suffix == ".txt":
-        try:
-            return filepath.read_text(errors="ignore")[:max_chars]
-        except OSError as exc:
-            logger.warning("text_preview_failed", path=str(filepath), error=str(exc))
-            return ""
-    if suffix != ".pdf":
-        return ""
-    for attempt in range(3):
-        try:
-            reader = PdfReader(str(filepath))
-            text = ""
-            for page in reader.pages:
-                text += page.extract_text() or ""
-                if len(text) >= max_chars:
-                    break
-            return text[:max_chars]
-        except OSError as exc:
-            if exc.errno == errno.EDEADLK and attempt < 2:
-                time.sleep(0.5 * (attempt + 1))
-                continue
-            logger.warning("pdf_preview_failed", path=str(filepath), error=str(exc))
-            return ""
-        except Exception as exc:
-            logger.warning("pdf_preview_failed", path=str(filepath), error=str(exc))
-            return ""
-    return ""
+# Type for the OCR engine — could be RapidOCR or None before first use
+_OCREngine = object
 
 
 def render_pdf_page(pdf_path: Path, dpi: int = 200) -> Path | None:
@@ -72,6 +46,35 @@ def render_pdf_page(pdf_path: Path, dpi: int = 200) -> Path | None:
     finally:
         if document is not None:
             document.close()
+
+
+def _render_pdf_pages(pdf_path: Path, max_pages: int, dpi: int = 200) -> list[Path]:
+    """Render up to max_pages PDF pages into temporary PNG files.
+
+    Returns a list of paths to temp images. Caller is responsible for cleanup.
+    """
+    rendered: list[Path] = []
+    document: fitz.Document | None = None
+    try:
+        document = fitz.open(str(pdf_path))
+        page_count = min(document.page_count, max_pages)
+        for page_idx in range(page_count):
+            page = document.load_page(page_idx)
+            pixmap = page.get_pixmap(dpi=dpi)
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as file_handle:
+                temp_path = Path(file_handle.name)
+            pixmap.save(str(temp_path))
+            rendered.append(temp_path)
+    except Exception as exc:
+        # Clean up any already-rendered pages
+        for path in rendered:
+            path.unlink(missing_ok=True)
+        logger.warning("pdf_render_failed", path=str(pdf_path), error=str(exc))
+        return []
+    finally:
+        if document is not None:
+            document.close()
+    return rendered
 
 
 def encode_image_base64(image_path: Path) -> str | None:
@@ -123,13 +126,12 @@ def compress_pdf(src: Path, dest: Path, dpi: int = 150, jpeg_quality: int = 80) 
 
 
 def extract_content(filepath: Path) -> tuple[str, str | None]:
-    """Extract content from a file using text-first, vision-fallback strategy.
+    """Extract content from a file using OCR-first, vision-fallback strategy.
 
     Returns a tuple of (extracted_text, image_base64 | None).
     - For text files: returns (text, None)
     - For PDFs with text: returns (text, None)
-    - For PDFs without text (scans): returns ("", image_base64)
-    - For images: returns ("", image_base64)
+    - For images / scan-PDFs: OCR first, vision fallback only if OCR fails.
     """
     suffix = filepath.suffix.lower()
 
@@ -142,32 +144,77 @@ def extract_content(filepath: Path) -> tuple[str, str | None]:
             logger.warning("text_read_failed", path=str(filepath), error=str(exc))
             return ("", None)
 
-    # Image files: encode to base64
+    # Image files: OCR first, vision fallback
     if is_image_file(filepath):
-        image_base64 = encode_image_base64(filepath)
-        return ("", image_base64)
+        return _ocr_or_vision_image(filepath)
 
-    # PDF files: try text extraction first, fall back to image rendering
+    # PDF files: try text extraction first, OCR/vision for scans
     if suffix == ".pdf":
         text = _extract_pdf_text(filepath)
         if text.strip():
             return (text, None)
-
-        # No text found - treat as scan, render to image
-        temp_image = render_pdf_page(filepath)
-        if temp_image is None:
-            return ("", None)
-        try:
-            image_base64 = encode_image_base64(temp_image)
-            return ("", image_base64)
-        finally:
-            temp_image.unlink(missing_ok=True)
+        return _ocr_or_vision_scan_pdf(filepath)
 
     # Unsupported file type
     return ("", None)
 
 
-def _extract_pdf_text(filepath: Path, max_chars: int = 1000) -> str:
+def _ocr_or_vision_image(image_path: Path) -> tuple[str, str | None]:
+    """OCR an image file; fall back to vision if OCR is insufficient."""
+    ocr_result = ocr_image(image_path)
+    if ocr_result is not None and is_usable_ocr(ocr_result):
+        return (ocr_result.text, None)
+    image_base64 = encode_image_base64(image_path)
+    return ("", image_base64)
+
+
+def _ocr_or_vision_scan_pdf(pdf_path: Path) -> tuple[str, str | None]:
+    """OCR all pages of a scan-PDF; fall back to first-page vision if insufficient.
+
+    Renders each page as a temp PNG, runs OCR, and accumulates text up to
+    the preview character limit. If aggregate OCR is unusable, returns the
+    first page as a vision image.
+    """
+    document: fitz.Document | None = None
+    try:
+        document = fitz.open(str(pdf_path))
+        page_count = document.page_count
+    except Exception as exc:
+        logger.warning("pdf_open_failed", path=str(pdf_path), error=str(exc))
+        return ("", None)
+    finally:
+        if document is not None:
+            document.close()
+
+    if page_count == 0:
+        return ("", None)
+
+    # Render all pages, run OCR, accumulate text
+    rendered = _render_pdf_pages(pdf_path, max_pages=page_count)
+    try:
+        parts: list[str] = []
+        for page_path in rendered:
+            ocr_result = ocr_image(page_path)
+            if ocr_result and ocr_result.text.strip():
+                parts.append(ocr_result.text)
+            if len("".join(parts)) >= _MAX_PREVIEW_CHARS:
+                break
+
+        aggregate_text = "".join(parts)[:_MAX_PREVIEW_CHARS]
+        if is_usable_ocr(OCRResult(aggregate_text, 1.0, len(parts))):
+            return (aggregate_text, None)
+
+        # OCR insufficient — fall back to first page vision
+        if rendered:
+            image_base64 = encode_image_base64(rendered[0])
+            return ("", image_base64)
+        return ("", None)
+    finally:
+        for path in rendered:
+            path.unlink(missing_ok=True)
+
+
+def _extract_pdf_text(filepath: Path, max_chars: int = _MAX_PREVIEW_CHARS) -> str:
     """Extract text from a PDF using pypdf."""
     for attempt in range(3):
         try:

@@ -36,7 +36,7 @@ model = "gpt-4o-mini"
 
 temperature = 0.2
 max_retries = 2
-timeout = 60
+timeout = 120
 
 [compress]
 enabled = false
