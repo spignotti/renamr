@@ -12,7 +12,6 @@ Git policy: `feature-pr` — always work on a feature branch, never directly on 
 - conventional commits, PR flow, squash merge in GitHub UI
 - keep README, packaging metadata, and release hygiene public-facing and intentional
 - branch/commit/PR workflow → load `git-workflow` skill
-- Git lifecycle: every planned package ends with a commit; final push after review; completed remote features open a PR by default
 
 ## Tech Stack
 - Language: Python 3.12+
@@ -89,9 +88,9 @@ version-specific docs from Context7 instead of relying on memory.
 
 ## Project Contract
 
-Status: not-required
+Status: active
 Manifest: TECHNICAL_CONTRACT.md
-Activation reason: none
+Activation reason: production
 Opt-out reason: none
 
 ## GitHub Issues
