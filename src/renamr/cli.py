@@ -6,11 +6,13 @@ import os
 from pathlib import Path
 from typing import Annotated
 
+import structlog
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from renamr import __version__
+from renamr.errors import describe_error
 from renamr.logging import setup_logging
 from renamr.models import InboxConfig, load_config
 from renamr.renamer import RunSummary, undo_last_run
@@ -22,6 +24,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+logger = structlog.get_logger(__name__)
 
 
 def _config_dir() -> Path:
@@ -105,21 +108,43 @@ def run(
     if not config_path.exists():
         typer.secho("Missing config.toml. Run `renamr init` first.", fg=typer.colors.RED)
         raise typer.Exit(code=1)
-    app_config = load_config(config_path)
-    if inbox is not None:
-        # Override with single inbox using CLI path
-        app_config = app_config.model_copy(
-            update={"inboxes": [InboxConfig(path=str(inbox))]}
+    log_path = config_path.parent / "renamr.log"
+    try:
+        setup_logging("DEBUG" if verbose else "WARNING", False, log_path, verbose)
+        app_config = load_config(config_path)
+        if inbox is not None:
+            app_config = app_config.model_copy(update={"inboxes": [InboxConfig(path=str(inbox))]})
+        if recursive is not None:
+            app_config = app_config.model_copy(update={"recursive": recursive})
+        if compress is None:
+            compress = app_config.compress.enabled
+        log_level = "DEBUG" if verbose else app_config.logging.level
+        setup_logging(log_level, app_config.logging.json_logs, log_path, verbose)
+        summary = run_pipeline(
+            app_config, dry_run=dry_run, compress=compress, data_dir=config_path.parent
         )
-    if recursive is not None:
-        app_config = app_config.model_copy(update={"recursive": recursive})
-    if compress is None:
-        compress = app_config.compress.enabled
-    log_level = "DEBUG" if verbose else app_config.logging.level
-    setup_logging(log_level, app_config.logging.json_logs)
-    data_dir = config_path.parent
-    summary = run_pipeline(app_config, dry_run=dry_run, compress=compress, data_dir=data_dir)
+    except Exception as exc:
+        logger.exception("run_failed")
+        message = (
+            "Invalid configuration. Check config.toml."
+            if isinstance(exc, ValueError)
+            else describe_error(exc)
+        )
+        typer.secho(f"Error: {message}", fg=typer.colors.RED, err=True)
+        _print_log_hint(log_path)
+        raise typer.Exit(code=1) from None
     _print_summary(summary)
+    if summary.failed:
+        if any(result.fatal for result in summary.results):
+            typer.secho("Run stopped after a provider configuration error.", err=True)
+        _print_log_hint(log_path)
+        raise typer.Exit(code=1)
+
+
+def _print_log_hint(log_path: Path) -> None:
+    """Point to diagnostics without expanding them in the terminal."""
+    if log_path.exists():
+        typer.echo(f"Diagnostics: {log_path} (or rerun with --verbose).", err=True)
 
 
 @app.command()
@@ -170,4 +195,8 @@ def _status_color(status: str) -> str:
 
 def main() -> None:
     """Run the Typer application."""
-    app()
+    try:
+        app()
+    except Exception as exc:
+        typer.secho(f"Error: {describe_error(exc)}", fg=typer.colors.RED, err=True)
+        raise SystemExit(1) from None

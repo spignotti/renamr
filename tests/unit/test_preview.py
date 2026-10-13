@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
+import pymupdf
 from PIL import Image
 
 import renamr.preview as preview_module
@@ -17,26 +17,27 @@ from renamr.preview import (
 
 
 def test_render_pdf_page_cleans_up_temp_file_on_save_failure(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     pdf_path = tmp_path / "sample.pdf"
-    document = fitz.open()
+    document = pymupdf.open()
     document.new_page()
     document.save(pdf_path)
     document.close()
 
     created_paths: list[Path] = []
-    original_save = fitz.Pixmap.save
+    original_save = pymupdf.Pixmap.save
 
-    def failing_save(self: fitz.Pixmap, filename: str, *args: object, **kwargs: object) -> None:
+    def failing_save(self: pymupdf.Pixmap, filename: str, *args: object, **kwargs: object) -> None:
         created_paths.append(Path(filename))
         raise RuntimeError("save failed")
 
-    monkeypatch.setattr(fitz.Pixmap, "save", failing_save)
+    monkeypatch.setattr(pymupdf.Pixmap, "save", failing_save)
 
     result = render_pdf_page(pdf_path)
 
-    monkeypatch.setattr(fitz.Pixmap, "save", original_save)
+    monkeypatch.setattr(pymupdf.Pixmap, "save", original_save)
     assert result is None
     assert created_paths
     assert not created_paths[0].exists()
@@ -67,7 +68,7 @@ class TestExtractContentPdf:
 
     def test_text_pdf_returns_text_only(self, tmp_path: Path) -> None:
         pdf_path = tmp_path / "document.pdf"
-        document = fitz.open()
+        document = pymupdf.open()
         page = document.new_page()
         page.insert_text((50, 50), "This is a text PDF with content")
         document.save(pdf_path)
@@ -81,7 +82,7 @@ class TestExtractContentPdf:
     def test_scan_pdf_ocr_usable_returns_text(self, tmp_path: Path, monkeypatch) -> None:
         """Scan PDF with usable OCR returns text, no image."""
         pdf_path = tmp_path / "scan.pdf"
-        document = fitz.open()
+        document = pymupdf.open()
         document.new_page()
         document.save(pdf_path)
         document.close()
@@ -101,7 +102,7 @@ class TestExtractContentPdf:
     def test_scan_pdf_ocr_unusable_returns_vision(self, tmp_path: Path, monkeypatch) -> None:
         """Scan PDF with unusable OCR returns first-page vision image."""
         pdf_path = tmp_path / "scan.pdf"
-        document = fitz.open()
+        document = pymupdf.open()
         document.new_page()
         document.save(pdf_path)
         document.close()

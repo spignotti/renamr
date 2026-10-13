@@ -157,7 +157,19 @@ model = "openrouter/openai/gpt-4o-mini"
 api_base = "https://openrouter.ai/api/v1"
 ```
 
-Then set `OPENROUTER_API_KEY` instead of `OPENAI_API_KEY`. Any provider supported by LiteLLM works without code changes.
+OpenRouter reads `OPENROUTER_API_KEY` from the environment of the running process.
+Any provider supported by LiteLLM works without code changes.
+
+If your key is stored in Infisical, run renamr from a directory with your Infisical project
+configuration (environment `dev`):
+
+```bash
+infisical run -- renamr run --dry-run
+infisical run -- renamr run
+```
+
+A key stored in the vault becomes available to renamr when Infisical injects it into the
+process. An authentication failure stops the run immediately; completed renames remain undoable.
 
 ### Vision Fallback Model
 
@@ -203,13 +215,30 @@ renamr run [--config PATH]      Process files and rename them
   --inbox PATH                  Override inbox folder
   --recursive / --no-recursive  Override recursive setting
   --compress / --no-compress    Override compression setting
-  --verbose                     Enable debug logging
+  --verbose                     Show sanitized diagnostic logging
 renamr undo [--config PATH]     Undo the last successful run
 renamr version                  Print version
 ```
 
 `undo.json` is stored next to the config file. With the default setup, that means
 `~/.config/renamr/undo.json`.
+
+### Errors and diagnostics
+
+Normal runs show a summary and short, actionable errors. Failed runs exit with status `1`.
+Provider authentication, access, and unavailable-model errors stop further processing.
+Transient errors use the configured retry limit.
+
+Diagnostics are stored beside `config.toml` in `renamr.log` (by default,
+`~/.config/renamr/renamr.log`). The CLI prints the path when a run fails. Use `--verbose`
+to also show diagnostic events in the terminal at DEBUG level. `[logging].level` controls
+file-only diagnostic detail; `json_logs = true` selects JSON output. Errors while loading the
+configuration use the default text format. Logs rotate at 1 MB with two backups, with owner-only
+read/write permissions on all log files.
+
+Diagnostics include event names, exception types, filenames, and stack locations.
+Provider response bodies, exception messages, document contents, and local variable values
+are excluded. Runs with no successful renames preserve the previous undo record.
 
 ## Privacy & Security
 
@@ -235,7 +264,7 @@ Additional notes:
 
 - Always use an `https://` endpoint for `api_base`. An `http://` URL sends file content unencrypted.
 - Keep `~/.config/renamr/undo.json` private on shared systems — it contains the file paths from the last run.
-- Avoid sharing verbose log output publicly; failed auth responses may include API key fragments.
+- Keep diagnostic logs private: they include local file names and stack paths.
 
 ## Maintenance
 

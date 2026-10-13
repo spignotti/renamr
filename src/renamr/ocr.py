@@ -7,6 +7,8 @@ from typing import Any
 
 import structlog
 
+from renamr.logging import configure_dependency_loggers
+
 logger = structlog.get_logger(__name__)
 
 # Thresholds for usability heuristic
@@ -36,7 +38,8 @@ def _get_engine() -> _EngineCallable:
     if _engine is None:
         from rapidocr import RapidOCR
 
-        _engine = RapidOCR()
+        configure_dependency_loggers()
+        _engine = RapidOCR(params={"Global.log_level": "warning"})
     return _engine
 
 
@@ -66,7 +69,7 @@ def ocr_image(image_path: str | Any) -> OCRResult | None:
             line_count=len(texts),
         )
     except Exception as exc:
-        logger.warning("ocr_failed", path=str(image_path), error=str(exc))
+        logger.warning("ocr_failed", path=str(image_path), error_type=type(exc).__name__)
         return None
 
 

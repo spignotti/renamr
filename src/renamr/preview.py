@@ -9,7 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 
-import fitz
+import pymupdf
 import structlog
 from PIL import Image
 from pypdf import PdfReader
@@ -26,10 +26,10 @@ _OCREngine = object
 
 def render_pdf_page(pdf_path: Path, dpi: int = 200) -> Path | None:
     """Render the first PDF page into a temporary PNG file."""
-    document: fitz.Document | None = None
+    document: pymupdf.Document | None = None
     temp_path: Path | None = None
     try:
-        document = fitz.open(str(pdf_path))
+        document = pymupdf.open(str(pdf_path))
         if document.page_count == 0:
             return None
         page = document.load_page(0)
@@ -41,7 +41,7 @@ def render_pdf_page(pdf_path: Path, dpi: int = 200) -> Path | None:
     except Exception as exc:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
-        logger.warning("pdf_render_failed", path=str(pdf_path), error=str(exc))
+        logger.warning("pdf_render_failed", path=str(pdf_path), error_type=type(exc).__name__)
         return None
     finally:
         if document is not None:
@@ -54,9 +54,9 @@ def _render_pdf_pages(pdf_path: Path, max_pages: int, dpi: int = 200) -> list[Pa
     Returns a list of paths to temp images. Caller is responsible for cleanup.
     """
     rendered: list[Path] = []
-    document: fitz.Document | None = None
+    document: pymupdf.Document | None = None
     try:
-        document = fitz.open(str(pdf_path))
+        document = pymupdf.open(str(pdf_path))
         page_count = min(document.page_count, max_pages)
         for page_idx in range(page_count):
             page = document.load_page(page_idx)
@@ -69,7 +69,7 @@ def _render_pdf_pages(pdf_path: Path, max_pages: int, dpi: int = 200) -> list[Pa
         # Clean up any already-rendered pages
         for path in rendered:
             path.unlink(missing_ok=True)
-        logger.warning("pdf_render_failed", path=str(pdf_path), error=str(exc))
+        logger.warning("pdf_render_failed", path=str(pdf_path), error_type=type(exc).__name__)
         return []
     finally:
         if document is not None:
@@ -86,7 +86,7 @@ def encode_image_base64(image_path: Path) -> str | None:
             rgb_image.save(buffer, format="JPEG", quality=95)
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
     except Exception as exc:
-        logger.warning("image_encode_failed", path=str(image_path), error=str(exc))
+        logger.warning("image_encode_failed", path=str(image_path), error_type=type(exc).__name__)
         return None
 
 
@@ -97,22 +97,22 @@ def is_image_file(filepath: Path) -> bool:
 
 def compress_pdf(src: Path, dest: Path, dpi: int = 150, jpeg_quality: int = 80) -> bool:
     """Re-render a PDF to JPEG-backed pages and keep it only if smaller."""
-    document: fitz.Document | None = None
-    output: fitz.Document | None = None
+    document: pymupdf.Document | None = None
+    output: pymupdf.Document | None = None
     try:
-        document = fitz.open(str(src))
-        output = fitz.open()
+        document = pymupdf.open(str(src))
+        output = pymupdf.open()
         for page in document:
             pixmap = page.get_pixmap(dpi=dpi)
             image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
             buffer = io.BytesIO()
             image.save(buffer, format="JPEG", quality=jpeg_quality)
-            rect = fitz.Rect(0, 0, page.rect.width, page.rect.height)
+            rect = pymupdf.Rect(0, 0, page.rect.width, page.rect.height)
             new_page = output.new_page(width=rect.width, height=rect.height)
             new_page.insert_image(rect, stream=buffer.getvalue())
         output.save(str(dest), deflate=True)
     except Exception as exc:
-        logger.warning("pdf_compress_failed", path=str(src), error=str(exc))
+        logger.warning("pdf_compress_failed", path=str(src), error_type=type(exc).__name__)
         return False
     finally:
         if output is not None:
@@ -141,7 +141,7 @@ def extract_content(filepath: Path) -> tuple[str, str | None]:
             text = filepath.read_text(errors="ignore")
             return (text, None)
         except OSError as exc:
-            logger.warning("text_read_failed", path=str(filepath), error=str(exc))
+            logger.warning("text_read_failed", path=str(filepath), error_type=type(exc).__name__)
             return ("", None)
 
     # Image files: OCR first, vision fallback
@@ -175,12 +175,12 @@ def _ocr_or_vision_scan_pdf(pdf_path: Path) -> tuple[str, str | None]:
     the preview character limit. If aggregate OCR is unusable, returns the
     first page as a vision image.
     """
-    document: fitz.Document | None = None
+    document: pymupdf.Document | None = None
     try:
-        document = fitz.open(str(pdf_path))
+        document = pymupdf.open(str(pdf_path))
         page_count = document.page_count
     except Exception as exc:
-        logger.warning("pdf_open_failed", path=str(pdf_path), error=str(exc))
+        logger.warning("pdf_open_failed", path=str(pdf_path), error_type=type(exc).__name__)
         return ("", None)
     finally:
         if document is not None:
@@ -230,10 +230,14 @@ def _extract_pdf_text(filepath: Path, max_chars: int = _MAX_PREVIEW_CHARS) -> st
             if exc.errno == errno.EDEADLK and attempt < 2:
                 time.sleep(0.5 * (attempt + 1))
                 continue
-            logger.warning("pdf_text_extraction_failed", path=str(filepath), error=str(exc))
+            logger.warning(
+                "pdf_text_extraction_failed", path=str(filepath), error_type=type(exc).__name__
+            )
             return ""
         except Exception as exc:
-            logger.warning("pdf_text_extraction_failed", path=str(filepath), error=str(exc))
+            logger.warning(
+                "pdf_text_extraction_failed", path=str(filepath), error_type=type(exc).__name__
+            )
             return ""
     return ""
 
