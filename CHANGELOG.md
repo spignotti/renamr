@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project adheres to Semantic Versioning.
 
+## [1.4.1] - 2026-10-13
+
+
+
+### Fixed
+
+- **cli:** Make provider failures actionable and update vulnerable dependencies
+
+
+### Maintenance
+
+- **github:** Sync issue templates (#41)
+
+- **governance:** Activate contract and branch cleanup (#44)
+
+
 ## [1.4.0] - 2026-09-12
 
 

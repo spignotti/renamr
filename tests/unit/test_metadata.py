@@ -3,6 +3,14 @@
 from datetime import date, datetime
 from types import SimpleNamespace
 
+import pytest
+from litellm.exceptions import (
+    AuthenticationError,
+    BadRequestError,
+    NotFoundError,
+    PermissionDeniedError,
+)
+
 import renamr.metadata as metadata_module
 from renamr.metadata import _parse_date_string, _parse_metadata, extract_metadata
 from renamr.models import AppConfig, InboxConfig
@@ -158,3 +166,48 @@ def test_extract_metadata_selects_vision_model_for_image(monkeypatch) -> None:
 
     assert captured["model"] == "ollama/vision"
     assert captured["api_base"] == "http://localhost:11434"
+
+
+@pytest.mark.parametrize(
+    "error_type", [AuthenticationError, PermissionDeniedError, NotFoundError, BadRequestError]
+)
+def test_permanent_errors_are_not_retried(
+    error_type: type[AuthenticationError | PermissionDeniedError | NotFoundError | BadRequestError],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = AuthenticationError("synthetic", "openrouter", "test").response
+    error = error_type(
+        message="synthetic response", llm_provider="openrouter", model="test", response=response
+    )
+    calls: list[object] = []
+    sleeps: list[float] = []
+
+    def failing_completion(**kwargs: object) -> None:
+        calls.append(kwargs)
+        raise error
+
+    monkeypatch.setattr(metadata_module, "completion", failing_completion)
+    monkeypatch.setattr(metadata_module.time, "sleep", sleeps.append)
+    with pytest.raises(error_type):
+        metadata_module._request_metadata("test", None, [], 0.2, 2, 10)
+
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_transient_error_retries_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+    sleeps: list[float] = []
+
+    def failing_completion(**kwargs: object) -> None:
+        calls.append(kwargs)
+        raise RuntimeError("synthetic transient failure")
+
+    monkeypatch.setattr(metadata_module, "completion", failing_completion)
+    monkeypatch.setattr(metadata_module.time, "sleep", sleeps.append)
+    with pytest.raises(RuntimeError):
+        metadata_module._request_metadata("test", None, [], 0.2, 2, 10)
+
+    assert len(calls) == 3
+    assert sleeps == [1, 2]
+    assert all(call["num_retries"] == 0 for call in calls)

@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import structlog
+
+from renamr.errors import describe_error, is_fatal_provider_error
 from renamr.files import (
     build_filename,
     download_icloud_file,
@@ -24,6 +27,7 @@ from renamr.preview import (
     extract_content,
 )
 
+logger = structlog.get_logger(__name__)
 UNDO_FILENAME = "undo.json"
 
 
@@ -41,6 +45,7 @@ class RenameResult:
     new_name: str | None
     status: str
     error: str | None = None
+    fatal: bool = False
 
 
 @dataclass(frozen=True)
@@ -113,7 +118,10 @@ def process_file(
         new_path = rename_file(filepath, filepath.parent, new_name)
         return RenameResult(filepath, new_path, new_name, "renamed")
     except Exception as exc:
-        return RenameResult(filepath, None, None, "failed", str(exc))
+        logger.exception("file_processing_failed", filename=filepath.name)
+        return RenameResult(
+            filepath, None, None, "failed", describe_error(exc), is_fatal_provider_error(exc)
+        )
 
 
 def run(config: AppConfig, dry_run: bool, compress: bool, data_dir: Path) -> RunSummary:
@@ -122,6 +130,9 @@ def run(config: AppConfig, dry_run: bool, compress: bool, data_dir: Path) -> Run
 
     # Resolve effective configs and check if Ollama is needed
     effective_configs = [config.get_effective_config(inbox) for inbox in config.inboxes]
+    for effective_config in effective_configs:
+        if not effective_config.path.exists():
+            raise FileNotFoundError(f"Inbox path does not exist: {effective_config.path}")
     needs_ollama = any(
         _uses_ollama_model(cfg.model) or _uses_ollama_model(cfg.vision_model)
         for cfg in effective_configs
@@ -131,23 +142,29 @@ def run(config: AppConfig, dry_run: bool, compress: bool, data_dir: Path) -> Run
         for inbox_config in config.inboxes:
             effective_config = config.get_effective_config(inbox_config)
 
-            if not effective_config.path.exists():
-                raise FileNotFoundError(f"Inbox path does not exist: {effective_config.path}")
-
             results.extend(
                 _download_stub(stub)
                 for stub in _scan_icloud_stubs(effective_config.path, config.recursive)
             )
             filepaths = scan_files(effective_config.path, config.file_extensions, config.recursive)
-            results.extend(
-                process_file(path, effective_config, config, dry_run) for path in filepaths
-            )
+            for path in filepaths:
+                result = process_file(path, effective_config, config, dry_run)
+                results.append(result)
+                if result.fatal:
+                    return _finish_run(results, config, dry_run, compress, data_dir)
 
-        if compress and not dry_run:
+        return _finish_run(results, config, dry_run, compress, data_dir)
+
+
+def _finish_run(
+    results: list[RenameResult], config: AppConfig, dry_run: bool, compress: bool, data_dir: Path
+) -> RunSummary:
+    """Finalize completed renames, retaining previous undo state for an unsuccessful run."""
+    if not dry_run:
+        if compress:
             _compress_renamed_pdfs(results, config)
-        if not dry_run:
+        if any(result.status == "renamed" for result in results):
             write_undo_log(results, data_dir)
-
     return RunSummary(results)
 
 

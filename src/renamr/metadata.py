@@ -12,6 +12,7 @@ import structlog
 from litellm import completion
 from pydantic import BaseModel
 
+from renamr.errors import is_retryable_error
 from renamr.models import (
     DEFAULT_RENAME_PROMPT as MODELS_DEFAULT_RENAME_PROMPT,
 )
@@ -68,44 +69,52 @@ def extract_metadata(
             document_date=None,
             filename_format="date_subject",
         )
-    # Select endpoint: vision payload uses vision_model, text uses model
-    if image_base64 is not None:
-        selected_model = vision_model
-        selected_api_base = vision_api_base
-    else:
-        selected_model = model
-        selected_api_base = api_base
+    selected_model = vision_model if image_base64 is not None else model
+    selected_api_base = vision_api_base if image_base64 is not None else api_base
     prompt = _build_user_prompt(filename, created_at, preview_text)
     system_content = f"Language for all extracted metadata values: {language}\n\n{rename_prompt}"
     messages = [
         {"role": "system", "content": system_content},
         {"role": "user", "content": _build_user_content(prompt, image_base64)},
     ]
+    return _request_metadata(
+        selected_model, selected_api_base, messages, temperature, max_retries, timeout
+    )
+
+
+def _request_metadata(
+    model: str,
+    api_base: str | None,
+    messages: list[dict[str, Any]],
+    temperature: float,
+    max_retries: int,
+    timeout: int,
+) -> FileMetadata:
+    """Retry transient failures while rejecting permanent provider errors immediately."""
     for attempt in range(max_retries + 1):
         try:
             response = completion(
-                model=selected_model,
+                model=model,
                 messages=messages,
                 response_format={"type": "json_object"},
                 temperature=temperature,
-                api_base=selected_api_base,
+                api_base=api_base,
                 timeout=timeout,
+                num_retries=0,
             )
             content = cast(Any, response).choices[0].message.content
             if not content:
                 raise ValueError("Empty response content from LiteLLM.")
             return _parse_metadata(content)
         except Exception as exc:
-            if attempt >= max_retries:
-                logger.exception("metadata_extraction_failed", error=str(exc), filename=filename)
+            if attempt >= max_retries or not is_retryable_error(exc):
                 raise
             backoff = min(2**attempt, 30)
             logger.warning(
                 "metadata_extraction_retry",
                 attempt=attempt + 1,
                 backoff=backoff,
-                error=str(exc),
-                filename=filename,
+                error_type=type(exc).__name__,
             )
             time.sleep(backoff)
     raise AssertionError("unreachable")

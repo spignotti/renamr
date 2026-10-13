@@ -1,6 +1,6 @@
 [project]
 name = "renamr"
-version = "1.4.0"
+version = "1.4.1"
 description = "CLI tool that renames local files using AI-powered metadata extraction"
 authors = [
     { name = "Silas Pignotti", email = "pignottisilas@gmail.com" }
@@ -14,7 +14,7 @@ dependencies = [
     "pillow>=12.3.0",
     "pydantic>=2.12.5",
     "pymupdf>=1.27.2",
-    "pypdf>=6.18.1",
+    "pypdf>=6.19.0",
     "rapidocr>=3.9.0",
     "structlog>=25.5.0",
     "typer>=0.24.1",
