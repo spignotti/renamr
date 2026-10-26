@@ -88,6 +88,7 @@ class LocalInference:
         images: Sequence[str] = (),
         require_vision: bool = False,
         keep_alive: str | None = None,
+        timeout: float | None = None,
     ) -> StructuredResult[ModelT]:
         """Run one strict-schema completion and return validated data.
 
@@ -98,6 +99,8 @@ class LocalInference:
             output_mode: Optional per-call mode override.
             images: Optional base64 images.
             require_vision: Force the vision capability check.
+            keep_alive: Optional model-retention override.
+            timeout: Optional per-request HTTP timeout; None keeps the configured one.
 
         Returns:
             Validated data, timing metrics, and the mode used.
@@ -115,6 +118,7 @@ class LocalInference:
                 images=images,
                 require_vision=require_vision,
                 keep_alive=keep_alive,
+                timeout=timeout,
             )
         except LocalClientError as exc:
             raise InferenceError(exc.category) from None
@@ -129,13 +133,20 @@ def local_health(inference: LocalInference) -> bool:
     return True
 
 
-def verify_model(inference: LocalInference, model: str) -> LocalModelInfo:
+def verify_model(
+    inference: LocalInference, model: str, *, timeout: float | None = None
+) -> LocalModelInfo:
     """Return verified local metadata for a model.
+
+    Args:
+        inference: Local inference adapter.
+        model: Local model name.
+        timeout: Optional per-request timeout for inventory and show requests.
 
     Raises:
         InferenceError: If the model is not a verified local model.
     """
     try:
-        return inference.client.registry.show_model(model)
+        return inference.client.registry.show_model(model, timeout=timeout)
     except LocalClientError as exc:
         raise InferenceError(exc.category) from None

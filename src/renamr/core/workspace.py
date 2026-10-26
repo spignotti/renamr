@@ -88,22 +88,66 @@ class Workspace:
         model_digest: str = "",
     ) -> Workspace:
         """Open a workspace, resolving the state directory by precedence."""
-        resolved = state_dir
-        if resolved is None:
-            if config_path is not None and not Path(config_path).expanduser().is_file():
-                raise ConfigError(
-                    f"explicit bootstrap config does not exist: {Path(config_path).expanduser()}"
-                )
-            bootstrap_path = resolve_bootstrap_config(config_path, env)
-            if bootstrap_path is not None:
-                resolved = load_bootstrap(bootstrap_path).state_dir
-            else:
-                resolved = default_state_dir(env)
-        state = ensure_state_layout(Path(resolved).expanduser())
+        state = ensure_state_layout(_resolve_state(config_path, state_dir, env))
         db = Database(state / CATALOG_FILENAME)
         with WriterLock.for_state(state):
             db.initialize()
         return cls(db, state, extractor=extractor, runner=runner, model_digest=model_digest)
+
+    @classmethod
+    def open_locked(
+        cls,
+        *,
+        config_path: Path | None = None,
+        state_dir: Path | None = None,
+        env: Mapping[str, str] | None = None,
+        blocking: bool = False,
+        timeout: float | None = None,
+        extractor: FeatureExtractor | None = None,
+        runner: ExtractionRunner | None = None,
+        model_digest: str = "",
+    ) -> tuple[Workspace | None, WriterLock | None]:
+        """Open and initialize only while holding one caller-owned writer lock.
+
+        Returns:
+            ``(workspace, held_lock)`` when initialization succeeded, or
+            ``(None, None)`` when a non-blocking attempt found another writer.
+
+        Raises:
+            LockError: If a blocking wait times out or the lock cannot be opened.
+            StateError: If the state layout is invalid.
+        """
+        state = ensure_state_layout(_resolve_state(config_path, state_dir, env))
+        lock = WriterLock.for_state(state)
+        if not lock.acquire(blocking=blocking, timeout=timeout):
+            return None, None
+        try:
+            db = Database(state / CATALOG_FILENAME)
+            db.initialize()
+        except BaseException:
+            lock.release()
+            raise
+        return (
+            cls(db, state, extractor=extractor, runner=runner, model_digest=model_digest),
+            lock,
+        )
+
+
+def _resolve_state(
+    config_path: Path | None, state_dir: Path | None, env: Mapping[str, str] | None
+) -> Path:
+    """Resolve a state directory without creating it."""
+    resolved = state_dir
+    if resolved is not None:
+        return Path(resolved).expanduser()
+    if config_path is not None and not Path(config_path).expanduser().is_file():
+        raise ConfigError(
+            f"explicit bootstrap config does not exist: {Path(config_path).expanduser()}"
+        )
+    bootstrap_path = resolve_bootstrap_config(config_path, env)
+    if bootstrap_path is not None:
+        return load_bootstrap(bootstrap_path).state_dir
+    return default_state_dir(env)
 
 
 def ensure_state_layout(state_dir: Path) -> Path:

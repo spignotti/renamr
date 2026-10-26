@@ -227,9 +227,10 @@ See [docs/mcp.md](docs/mcp.md).
 - Unknown facts and incomplete/weak OCR stay in review; archive location or file
   timestamps never prove a contract ended.
 - Service ticks pass their remaining model-call and time budget into feature
-  chunks. A long document is deferred with an actionable review and manual retry
-  instead of exceeding the budget or starving later roots; partial feature
-  results never route.
+  chunks, including the per-request HTTP timeout. A long document is deferred with
+  an actionable review and manual retry instead of exceeding the budget or
+  starving later roots. A concurrent worker reports `busy` promptly. Partial or
+  stale feature results never route, including pending plans.
 - Text export writes complete stored OCR/text to an explicit `0600` destination.
   It refuses an existing destination unless `--overwrite --yes` is given after
   confirmation, and it never rewrites a registered source original.

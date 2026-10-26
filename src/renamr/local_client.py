@@ -56,9 +56,9 @@ class LocalModelRegistry:
     def __init__(self, transport: LocalOllamaTransport) -> None:
         self._transport = transport
 
-    def list_models(self) -> list[InstalledModel]:
+    def list_models(self, *, timeout: float | None = None) -> list[InstalledModel]:
         """Return the models reported by ``/api/tags``."""
-        payload = self._transport.request("GET", "/api/tags", None)
+        payload = self._transport.request("GET", "/api/tags", None, timeout=timeout)
         raw_models = payload.get("models")
         if not isinstance(raw_models, list):
             raise LocalServerError(
@@ -81,7 +81,7 @@ class LocalModelRegistry:
             )
         return models
 
-    def show_model(self, model: str) -> LocalModelInfo:
+    def show_model(self, model: str, *, timeout: float | None = None) -> LocalModelInfo:
         """Return verified local metadata for an installed model.
 
         Verification requires the name to be present in the local inventory plus
@@ -100,13 +100,13 @@ class LocalModelRegistry:
             LocalServerError: If the server is unreachable or rejects the request.
         """
         name = normalize_model_name(model)
-        installed = {item.name: item for item in self.list_models()}
+        installed = {item.name: item for item in self.list_models(timeout=timeout)}
         if name not in installed:
             raise ModelNotInstalledError(
                 f"model '{name}' is not present in the local model inventory; install it "
                 "explicitly with 'ollama pull' before inference (renamr never downloads models)"
             )
-        payload = self._show_payload(name)
+        payload = self._show_payload(name, timeout=timeout)
         capabilities = _capability_list(payload.get("capabilities"))
         details = payload.get("details")
         details_map = details if isinstance(details, dict) else {}
@@ -131,10 +131,10 @@ class LocalModelRegistry:
             quantization=_as_str(details_map.get("quantization_level")),
         )
 
-    def _show_payload(self, name: str) -> dict[str, Any]:
+    def _show_payload(self, name: str, *, timeout: float | None = None) -> dict[str, Any]:
         """Fetch `/api/show` payload, rejecting remote metadata."""
         try:
-            payload = self._transport.request("POST", "/api/show", {"model": name})
+            payload = self._transport.request("POST", "/api/show", {"model": name}, timeout=timeout)
         except LocalServerError as error:
             if error.status == 404:
                 raise ModelNotInstalledError(
@@ -224,7 +224,7 @@ class LocalOllamaClient:
             LocalClientError: On transport, size, or schema failures.
         """
         _validate_output_mode(output_mode)
-        info = self._registry.show_model(model)
+        info = self._registry.show_model(model, timeout=timeout)
         _require_capabilities(info, images, require_vision)
         payload = _chat_payload(
             model=info.name,

@@ -117,6 +117,7 @@ class FeatureCompleter(Protocol):
         output_mode: OutputMode | None = None,
         images: Sequence[str] = (),
         require_vision: bool = False,
+        timeout: float | None = None,
     ) -> StructuredResult[DocumentFeatures]:
         """Return validated features for one bounded request."""
         ...
@@ -228,14 +229,19 @@ def _run_chunks(
     for chunk in chunks:
         if request.max_model_calls is not None and calls >= request.max_model_calls:
             return results, calls, "feature_budget_exhausted"
-        if (
-            request.deadline_monotonic is not None
-            and time.monotonic() >= request.deadline_monotonic
-        ):
+        timeout = _remaining_timeout(request)
+        if timeout is not None and timeout <= 0:
             return results, calls, "feature_time_budget_exhausted"
-        results.append(_complete_chunk(inference, model, output_mode, chunk))
+        results.append(_complete_chunk(inference, model, output_mode, chunk, timeout))
         calls += 1
     return results, calls, None
+
+
+def _remaining_timeout(request: FeatureRequest) -> float | None:
+    """Return the remaining monotonic seconds, or None when unbounded."""
+    if request.deadline_monotonic is None:
+        return None
+    return request.deadline_monotonic - time.monotonic()
 
 
 def _interpret_chunks(
@@ -290,6 +296,7 @@ def _complete_chunk(
     model: str,
     output_mode: OutputMode | None,
     chunk: PageChunk,
+    timeout: float | None = None,
 ) -> FeatureExtraction:
     """Run one bounded chunk through the local model and validate it."""
     messages = [
@@ -297,9 +304,13 @@ def _complete_chunk(
         ChatMessage(role="user", content=build_chunk_text(chunk)),
     ]
     try:
-        result = inference.complete(model, messages, DocumentFeatures, output_mode=output_mode)
+        result = inference.complete(
+            model, messages, DocumentFeatures, output_mode=output_mode, timeout=timeout
+        )
     except Exception as exc:
         reason = getattr(exc, "category", "inference_failed")
+        if timeout is not None and reason == "timeout":
+            return _blocked("feature_time_budget_exhausted", incomplete=True)
         return _blocked(f"inference_{reason}", incomplete=True)
     validation = validate_features(result.data, _page_text_map(chunk))
     if not validation.ok or validation.unsafe:

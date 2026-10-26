@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from renamr.core.errors import CoreError
-from renamr.core.scheduler import run_tick
+from renamr.core.scheduler import TickResult, run_tick
 from renamr.core.workspace import Workspace
 from renamr.logging import setup_logging
 
@@ -24,9 +24,15 @@ def main() -> int:
     arguments = parser.parse_args()
     state = arguments.state_dir.expanduser()
     try:
-        workspace = Workspace.open(state_dir=state)
-        setup_logging("INFO", False, state / "logs" / "service.log", False)
-        result = run_tick(workspace)
+        workspace, lock = Workspace.open_locked(state_dir=state, blocking=False)
+        if workspace is None or lock is None:
+            print(json.dumps(TickResult(status="busy").model_dump(mode="json"), sort_keys=True))
+            return 0
+        try:
+            setup_logging("INFO", False, state / "logs" / "service.log", False)
+            result = run_tick(workspace, lock=lock)
+        finally:
+            lock.release()
     except CoreError as exc:
         print(json.dumps({"status": "error", "error": exc.category}))
         return 1

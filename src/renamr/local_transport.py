@@ -285,6 +285,10 @@ class LocalOllamaTransport:
             response = connection.getresponse()
             status = response.status
             data = response.read(self._max_response_bytes + 1)
+        except TimeoutError:
+            raise LocalServerError(
+                "local Ollama server request timed out", category="timeout"
+            ) from None
         except (OSError, http.client.HTTPException):
             raise LocalServerError(
                 "local Ollama server is unreachable", category="unreachable"

@@ -48,6 +48,9 @@ with method, rotation, confidence, quality, and incompleteness.
   source original.
 - A preview is the default. Files change only through `run --apply`, an explicit
   structure apply, undo, or a service tick with automation enabled.
+- Automatic routing and pending-plan application require a current feature cache
+  key and a feature stage that is not failed, deferred, or blocked. Older facts
+  and user-confirmed labels remain available for local inspection.
 - An uncertain document stays in place with a review item. Missing naming values
   never become an automatic `Unknown` filename. A readable document with no
   matching rule produces one deduplicated destination question.
@@ -59,10 +62,14 @@ with method, rotation, confidence, quality, and incompleteness.
   stale label or structure proposal fails. Pending routes re-run deterministic
   rule selection at mutation time, so a new higher-priority rule or changed facts
   invalidate the plan.
-- Feature chunk work receives the remaining model-call and time budget. Partial
-  or incomplete feature results never become facts or routing input; they stay
-  unresolved with an actionable review. Budget deferrals are not failures and do
-  not stop later roots in the same tick.
+- Feature chunk work receives the remaining model-call and time budget as a
+  per-request HTTP timeout, including registry/model preflight. Partial or
+  incomplete feature results never become routing input; they stay unresolved
+  with an actionable review. Budget deferrals are not failures and do not stop
+  later roots in the same tick.
+- The service worker opens and initializes the catalog only while holding one
+  non-blocking writer lock and passes that same lock through the tick. Concurrent
+  workers report `busy` promptly without double acquisition or a migration race.
 - An owned local server is stopped after verification failure, extraction
   failure, and normal exit; a reused external server is never stopped.
 - Contract groups accept a validated root-relative base path. Stable contract ids

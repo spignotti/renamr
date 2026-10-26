@@ -84,22 +84,32 @@ class LaunchAgentStatus(BaseModel):
 Launcher = Callable[[list[str]], int]
 
 
-def run_tick(ws: Workspace) -> TickResult:
-    """Run one bounded tick under the non-blocking global writer lock."""
+def run_tick(ws: Workspace, *, lock: WriterLock | None = None) -> TickResult:
+    """Run one bounded tick under the non-blocking global writer lock.
+
+    A caller that already initialized the workspace under a live writer lock
+    passes that same lock, avoiding a second acquisition and keeping migrations
+    and the tick under one ownership period.
+    """
     state = service_state(ws.db)
     if state.get("paused"):
         return TickResult(status="paused")
-    lock = ws.lock()
-    if not lock.acquire(blocking=False):
-        return TickResult(status="busy")
+    owned = lock is None
+    active = ws.lock() if lock is None else lock
+    if owned:
+        if not active.acquire(blocking=False):
+            return TickResult(status="busy")
+    elif not active.held:
+        raise CoreError("run_tick requires a held writer lock when one is supplied")
     started = time.monotonic()
     try:
-        return _tick_locked(ws, started, lock)
+        return _tick_locked(ws, started, active)
     except (CoreError, OSError) as exc:
         _record_state(ws.db, "blocked", type(exc).__name__)
         return TickResult(status="blocked", error=type(exc).__name__)
     finally:
-        lock.release()
+        if owned:
+            active.release()
 
 
 def _tick_locked(ws: Workspace, started: float, lock: WriterLock) -> TickResult:
@@ -150,7 +160,8 @@ def _feature_pass(
     try:
         server.start_if_needed()
         inference = LocalInference.from_settings(settings, role="small")
-        info = verify_model(inference, settings.model_roles.small)
+        remaining = max(1.0, settings.service.max_seconds - (time.monotonic() - started))
+        info = verify_model(inference, settings.model_roles.small, timeout=min(30.0, remaining))
         if not info.digest:
             raise InferenceError("model_digest_unavailable")
         ws.model_digest = info.digest

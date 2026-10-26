@@ -390,3 +390,62 @@ def test_feature_pass_does_not_stop_external_server(tmp_path: Path, monkeypatch)
     _run_feature_pass(workspace)
 
     assert _FakeServer.instances[-1].events == ["start"]
+
+
+def test_service_worker_reports_busy_promptly_while_lock_is_held(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    _inbox(workspace, tmp_path)
+    lock = workspace.lock()
+    assert lock.acquire() is True
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "renamr.service_worker",
+                "--state-dir",
+                str(workspace.state_dir),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    finally:
+        lock.release()
+
+    assert time.monotonic() - started < 10
+    assert completed.returncode == 0
+    assert '"status": "busy"' in completed.stdout
+
+    idle = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "renamr.service_worker",
+            "--state-dir",
+            str(workspace.state_dir),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert idle.returncode == 0
+    assert '"status": "busy"' not in idle.stdout
+    assert '"status": "completed"' in idle.stdout or '"status": "partial"' in idle.stdout
+
+
+def test_run_tick_reuses_a_held_lock_without_reacquiring(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    _inbox(workspace, tmp_path)
+    lock = workspace.lock()
+    assert lock.acquire() is True
+    try:
+        result = scheduler.run_tick(workspace, lock=lock)
+        assert lock.held is True
+        assert result.status in ("completed", "partial")
+    finally:
+        lock.release()
+    assert lock.held is False

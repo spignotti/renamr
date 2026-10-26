@@ -22,7 +22,10 @@ install approval.
 
 ## Tick behavior
 
-- Take the global writer lock non-blockingly; a busy tick is skipped and reported.
+- Take the global writer lock non-blockingly before database initialization and
+  hold the same lock for the whole tick. A concurrent worker prints a sanitized
+  `busy` result promptly instead of blocking behind another writer or racing a
+  migration.
 - Reconcile non-terminal journal items before new work.
 - Scan registered roots with a cheap stat fast path. Unchanged content causes no
   hash, OCR, or model call.
@@ -31,9 +34,15 @@ install approval.
   `service.max_model_calls`, `service.max_pages`, `service.max_seconds`,
   `service.interval_s`).
 - Model-call and time budgets are passed into the feature chunk loop, so one
-  long document cannot make ten requests when one call remains. A deferral is
-  recorded as `feature_deferred` with a manual retry path; it is never marked
-  complete, permanently failed, or routable.
+  long document cannot make ten requests when one call remains. The remaining
+  time is also the per-request HTTP timeout (including registry/model preflight),
+  so a service budget of 90 seconds cannot leave a 120-second socket wait. A
+  deferral is recorded as `feature_deferred` with a manual retry path; it is
+  never marked complete, permanently failed, or routable.
+- A revision is routing-eligible only when its feature stage is complete, not
+  failed/deferred/blocked, and its cache key is current. Older facts remain in the
+  catalog for private inspection but cannot drive automatic routing or a pending
+  plan after a partial/failed refresh.
 - A changed file whose page count does not fit the remaining page budget is
   deferred with a `scan_budget_deferred` review item and manual retry path. It is
   never marked complete.

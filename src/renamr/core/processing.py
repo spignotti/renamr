@@ -14,6 +14,7 @@ from enum import StrEnum
 
 from renamr.core.catalog import RevisionRecord
 from renamr.core.db import Database
+from renamr.core.settings import Settings
 from renamr.local_transport import OutputMode
 
 CACHE_SCHEMA_VERSION = 1
@@ -77,6 +78,10 @@ def plan_stage(
         return Stage.EXTRACT
     if revision.failed_stage == "features_deferred":
         if feature_key is None or revision.error_category == feature_key:
+            return Stage.SKIP
+        return Stage.FEATURES
+    if revision.failed_stage == "features_blocked":
+        if feature_key is None or revision.feature_key == feature_key:
             return Stage.SKIP
         return Stage.FEATURES
     if feature_key is not None and revision.feature_key != feature_key:
@@ -226,6 +231,52 @@ def record_feature_deferred(db: Database, revision_id: str, *, feature_key: str)
             "attempts": 0,
         },
     )
+
+
+def record_feature_blocked(
+    db: Database, revision_id: str, *, feature_key: str, reason: str
+) -> None:
+    """Record a complete feature abstention while keeping prior facts private.
+
+    The current key is recorded so unchanged content does not retry on every
+    tick, but the revision is not eligible for automatic routing.
+    """
+    _update(
+        db,
+        revision_id,
+        {
+            "feature_key": feature_key,
+            "failed_stage": "features_blocked",
+            "error_category": reason,
+            "next_retry_at": "",
+            "attempts": 0,
+        },
+    )
+
+
+def feature_state_ready(
+    revision: RevisionRecord, settings: Settings, *, model_digest: str = ""
+) -> bool:
+    """Return whether stored facts may drive automatic routing.
+
+    A failed, deferred, blocked, backing-off, or stale-cache feature stage is
+    never routing-eligible, even when older facts remain available for local
+    inspection.
+    """
+    if revision.failed_stage or revision.next_retry_at or not revision.feature_key:
+        return False
+    prefix = f"{settings.model_roles.small}|{settings.output_mode}|{FEATURE_PROMPT_VERSION}|"
+    if not revision.feature_key.startswith(prefix):
+        return False
+    if model_digest:
+        expected = feature_cache_key(
+            settings.model_roles.small,
+            settings.output_mode,
+            model_digest=model_digest,
+            budget_signature=str(settings.feature_max_chars),
+        )
+        return revision.feature_key == expected
+    return True
 
 
 def retry_deferred_features(db: Database, root_ids: list[str]) -> int:

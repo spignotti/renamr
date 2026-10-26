@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import subprocess
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
@@ -18,6 +19,7 @@ from renamr.benchmark_schema import (
 )
 from renamr.core import catalog, hashing, mutation, workflow
 from renamr.core.db import Database
+from renamr.core.errors import InferenceError
 from renamr.core.extract import ExtractionResult, ExtractorLimits
 from renamr.core.extract_runner import ExtractionRunner, InProcessRunner, SubprocessRunner
 from renamr.core.features import (
@@ -83,6 +85,7 @@ class FakeInference:
     def __init__(self, types: list[str]) -> None:
         self._types = types
         self.calls = 0
+        self.timeouts: list[float | None] = []
 
     def complete(
         self,
@@ -93,7 +96,9 @@ class FakeInference:
         output_mode: OutputMode | None = None,
         images: Sequence[str] = (),
         require_vision: bool = False,
+        timeout: float | None = None,
     ) -> StructuredResult[DocumentFeatures]:
+        self.timeouts.append(timeout)
         content = messages[1].content
         current_page = 1
         page = 1
@@ -432,3 +437,46 @@ def test_partial_feature_success_never_qualifies_for_routing(tmp_path: Path) -> 
     kinds = {item["kind"] for item in workflow.review_items(ws)}
     assert "feature_incomplete" in kinds
     assert "features_unresolved" in kinds
+
+
+def test_bounded_feature_request_passes_remaining_timeout() -> None:
+    inference = FakeInference(["invoice"])
+    extractor = LocalFeatureExtractor(inference, "model", max_chars=1000, prompt_overhead=0)
+    deadline = time.monotonic() + 5
+
+    result = extractor.extract(FeatureRequest(page_texts=["Rechnung"], deadline_monotonic=deadline))
+
+    assert result.features is not None
+    assert inference.timeouts
+    timeout = inference.timeouts[0]
+    assert timeout is not None
+    assert 0 < timeout <= 5
+
+
+def test_unbounded_feature_request_keeps_configured_timeout() -> None:
+    inference = FakeInference(["invoice"])
+    extractor = LocalFeatureExtractor(inference, "model", max_chars=1000, prompt_overhead=0)
+
+    result = extractor.extract(FeatureRequest(page_texts=["Rechnung"]))
+
+    assert result.features is not None
+    assert inference.timeouts == [None]
+
+
+def test_bounded_inflight_timeout_becomes_budget_deferral() -> None:
+    class TimeoutInference(FakeInference):
+        def complete(self, *args, **kwargs):
+            self.calls += 1
+            self.timeouts.append(kwargs.get("timeout"))
+            raise InferenceError("timeout")
+
+    inference = TimeoutInference([])
+    extractor = LocalFeatureExtractor(inference, "model", max_chars=1000, prompt_overhead=0)
+
+    result = extractor.extract(
+        FeatureRequest(page_texts=["Rechnung"], deadline_monotonic=time.monotonic() + 5)
+    )
+
+    assert result.features is None
+    assert result.incomplete is True
+    assert result.blocked_reason == "feature_time_budget_exhausted"

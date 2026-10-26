@@ -10,12 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from renamr.benchmark_schema import DocumentFeatures
-from renamr.core import catalog, history, operations, roots, rules
+from renamr.core import catalog, history, operations, processing, roots, rules
 from renamr.core.catalog import Presence, QualityState
 from renamr.core.errors import CoreError, PathBoundaryError, PreconditionError, RuleError
 from renamr.core.journal import FaultInjector
 from renamr.core.roots import Root
 from renamr.core.runitem import RunGuard, RunItem
+from renamr.core.settings import Settings
 from renamr.core.workspace import Workspace
 
 
@@ -37,10 +38,11 @@ def plan_routing_locked(ws: Workspace, root_id: str, run_id: str) -> int:
     """Plan routing for one root while the caller already holds the writer lock."""
     root = roots.get_root(ws.db, root_id)
     active = rules.active_rules(ws.db)
+    settings = ws.settings()
     planned = 0
     for location in catalog.locations_for_root(ws.db, root.root_id):
         before = len(operations.run_items(ws.db, run_id))
-        _plan_location(ws, root, location, active, run_id)
+        _plan_location(ws, root, location, active, run_id, settings)
         planned += len(operations.run_items(ws.db, run_id)) - before
     return planned
 
@@ -191,6 +193,11 @@ def _check_planned_route(ws: Workspace, source_root_id: str | None, item: RunIte
         return
     try:
         root = roots.get_root(ws.db, source_root_id)
+        revision = catalog.get_revision(ws.db, item.revision_id)
+        if not processing.feature_state_ready(
+            revision, ws.settings(), model_digest=ws.model_digest
+        ):
+            raise PreconditionError("routing_plan_stale")
         facts = _facts_for_routing(catalog.get_facts(ws.db, item.revision_id))
         decision = rules.select_rule(
             rules.active_rules(ws.db),
@@ -218,31 +225,14 @@ def _plan_location(
     location: catalog.LocationRecord,
     active: list[rules.Rule],
     run_id: str,
+    settings: Settings,
 ) -> None:
     """Plan one location or record a review item."""
     if location.presence is Presence.MISSING:
         return
     revision = catalog.get_revision(ws.db, location.revision_id)
-    if revision.quality_state not in (QualityState.OK, QualityState.LOW):
-        catalog.record_review(
-            ws.db,
-            kind="quality_incomplete",
-            detail=str(revision.quality_state),
-            revision_id=revision.revision_id,
-            location_id=location.location_id,
-        )
-        return
-    from renamr.core.features import facts_to_features
-
-    features = facts_to_features(catalog.get_facts(ws.db, revision.revision_id))
-    if features is None or features.needs_review:
-        catalog.record_review(
-            ws.db,
-            kind="features_unresolved",
-            detail="pending_review",
-            revision_id=revision.revision_id,
-            location_id=location.location_id,
-        )
+    features = _routing_features(ws, location, revision, settings)
+    if features is None:
         return
     decision = _decide(ws, root, location, active)
     if decision.state == "conflict":
@@ -260,6 +250,46 @@ def _plan_location(
     if decision.state != "routed" or decision.target_root_id is None:
         return
     _plan_routed(ws, root, location, revision, decision, features, run_id)
+
+
+def _routing_features(
+    ws: Workspace,
+    location: catalog.LocationRecord,
+    revision: catalog.RevisionRecord,
+    settings: Settings,
+) -> DocumentFeatures | None:
+    """Return routing facts only for a complete, current feature stage."""
+    if revision.quality_state not in (QualityState.OK, QualityState.LOW):
+        catalog.record_review(
+            ws.db,
+            kind="quality_incomplete",
+            detail=str(revision.quality_state),
+            revision_id=revision.revision_id,
+            location_id=location.location_id,
+        )
+        return None
+    if not processing.feature_state_ready(revision, settings, model_digest=ws.model_digest):
+        catalog.record_review(
+            ws.db,
+            kind="features_unresolved",
+            detail=revision.failed_stage or revision.error_category or "feature_cache_stale",
+            revision_id=revision.revision_id,
+            location_id=location.location_id,
+        )
+        return None
+    from renamr.core.features import facts_to_features
+
+    features = facts_to_features(catalog.get_facts(ws.db, revision.revision_id))
+    if features is None or features.needs_review:
+        catalog.record_review(
+            ws.db,
+            kind="features_unresolved",
+            detail="pending_review",
+            revision_id=revision.revision_id,
+            location_id=location.location_id,
+        )
+        return None
+    return features
 
 
 def _record_unmatched(

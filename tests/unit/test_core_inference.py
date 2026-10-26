@@ -99,3 +99,40 @@ def test_inference_blocks_redirect(monkeypatch: pytest.MonkeyPatch) -> None:
             "gemma4:e4b", [ChatMessage(role="user", content="text")], DocumentFeatures
         )
     assert error.value.category == "request_rejected"
+
+
+def test_per_request_timeout_reaches_preflight_and_chat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = LocalOllamaClient()
+    server = FakeServer(chat=_payload(_FEATURES))
+    install_server(monkeypatch, client, server)
+    inference = LocalInference(output_mode="validated_prompt", client=client)
+
+    inference.complete(
+        "gemma4:e4b",
+        [ChatMessage(role="user", content="Extract features.")],
+        DocumentFeatures,
+        timeout=2.5,
+    )
+
+    assert server.timeouts
+    assert all(timeout == 2.5 for timeout in server.timeouts)
+
+
+def test_manual_unbounded_call_preserves_configured_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = LocalOllamaClient()
+    server = FakeServer(chat=_payload(_FEATURES))
+    install_server(monkeypatch, client, server)
+    inference = LocalInference(output_mode="validated_prompt", client=client)
+
+    inference.complete(
+        "gemma4:e4b",
+        [ChatMessage(role="user", content="Extract features.")],
+        DocumentFeatures,
+    )
+
+    assert server.timeouts
+    assert all(timeout is None for timeout in server.timeouts)

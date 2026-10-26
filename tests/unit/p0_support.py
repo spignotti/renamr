@@ -84,6 +84,7 @@ class FakeServer:
         self.chat = chat if chat is not None else {"message": {"content": "{}"}}
         self.show_status = show_status
         self.calls: list[tuple[str, str, dict[str, Any] | None]] = []
+        self.timeouts: list[float | None] = []
         self.chat_payload: dict[str, Any] | None = None
 
     def request(
@@ -95,6 +96,7 @@ class FakeServer:
         timeout: float | None = None,
     ) -> dict[str, Any]:
         self.calls.append((method, path, payload))
+        self.timeouts.append(timeout)
         if path == "/api/tags":
             return {"models": self.models}
         if path == "/api/show":

@@ -54,7 +54,7 @@ def run_features(
             db, revision_id, feature_key=feature_key, error_category=reason
         )
         return
-    processing.record_feature_result(db, revision_id, feature_key=feature_key)
+    processing.record_feature_blocked(db, revision_id, feature_key=feature_key, reason=reason)
     catalog.record_review(db, kind="feature_blocked", detail=reason, revision_id=revision_id)
     outcome.reviews += 1
 
