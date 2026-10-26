@@ -120,6 +120,7 @@ class LocalModelInfo(BaseModel):
     """Local metadata for a model from `/api/show`."""
 
     name: str
+    digest: str | None = None
     capabilities: list[str] = Field(default_factory=list)
     family: str | None = None
     parameter_size: str | None = None

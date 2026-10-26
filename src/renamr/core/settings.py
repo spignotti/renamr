@@ -39,6 +39,37 @@ class ModelRoles(BaseModel):
         return validate_local_model(value)
 
 
+class ModelKeepAlive(BaseModel):
+    """Model retention per role so an unrelated role does not stay resident."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    main: str = "5m"
+    small: str = "2m"
+    maintenance: str = "1m"
+
+    @field_validator("main", "small", "maintenance")
+    @classmethod
+    def validate_keep_alive(cls, value: str) -> str:
+        """Require a short non-empty duration token."""
+        stripped = value.strip()
+        if not stripped or len(stripped) > 16:
+            raise ValueError("keep_alive must be a short duration such as 5m")
+        return stripped
+
+
+class ServiceBudgets(BaseModel):
+    """Bounds for one scheduled reconciliation tick."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    interval_s: int = Field(default=60, ge=30, le=3600)
+    max_documents: int = Field(default=4, ge=1, le=100)
+    max_model_calls: int = Field(default=4, ge=0, le=100)
+    max_pages: int = Field(default=50, ge=1, le=1000)
+    max_seconds: float = Field(default=90.0, gt=0, le=3600)
+
+
 class Settings(BaseModel):
     """Active application behavior owned by the database."""
 
@@ -48,6 +79,8 @@ class Settings(BaseModel):
     output_mode: OutputMode = "validated_prompt"
     inference_backend: Literal["local"] = "local"
     model_roles: ModelRoles = Field(default_factory=ModelRoles)
+    model_keep_alive: ModelKeepAlive = Field(default_factory=ModelKeepAlive)
+    service: ServiceBudgets = Field(default_factory=ServiceBudgets)
 
     request_timeout_s: float = Field(default=120.0, gt=0)
     num_predict: int = Field(default=512, ge=1)

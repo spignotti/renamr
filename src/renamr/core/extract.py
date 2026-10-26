@@ -100,6 +100,28 @@ def detect_media_type(path: Path) -> str:
     return "application/octet-stream"
 
 
+def estimate_page_count(path: Path) -> int:
+    """Return a cheap page/frame count estimate without hashing or OCR."""
+    suffix = path.suffix.lower()
+    if suffix == PDF_SUFFIX:
+        document: pymupdf.Document | None = None
+        try:
+            document = pymupdf.open(str(path))
+            return max(0, document.page_count)
+        except Exception:
+            return 1
+        finally:
+            if document is not None:
+                document.close()
+    if suffix in IMAGE_SUFFIXES:
+        try:
+            with Image.open(path) as image:
+                return max(1, int(getattr(image, "n_frames", 1)))
+        except Exception:
+            return 1
+    return 1
+
+
 def default_ocr(path: Path) -> OCRText | None:
     """Run the bundled OCR engine, returning None on failure.
 

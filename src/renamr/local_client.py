@@ -81,10 +81,6 @@ class LocalModelRegistry:
             )
         return models
 
-    def installed_model_names(self) -> set[str]:
-        """Return the set of locally installed model names."""
-        return {model.name for model in self.list_models()}
-
     def show_model(self, model: str) -> LocalModelInfo:
         """Return verified local metadata for an installed model.
 
@@ -104,7 +100,8 @@ class LocalModelRegistry:
             LocalServerError: If the server is unreachable or rejects the request.
         """
         name = normalize_model_name(model)
-        if name not in self.installed_model_names():
+        installed = {item.name: item for item in self.list_models()}
+        if name not in installed:
             raise ModelNotInstalledError(
                 f"model '{name}' is not present in the local model inventory; install it "
                 "explicitly with 'ollama pull' before inference (renamr never downloads models)"
@@ -127,6 +124,7 @@ class LocalModelRegistry:
             )
         return LocalModelInfo(
             name=name,
+            digest=installed[name].digest,
             capabilities=capabilities,
             family=family,
             parameter_size=_as_str(details_map.get("parameter_size")),

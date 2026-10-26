@@ -36,11 +36,16 @@ class LocalInference:
         timeout: float = 120.0,
         num_predict: int = 512,
         num_ctx: int = 4096,
+        keep_alive: str = "5m",
         client: LocalOllamaClient | None = None,
     ) -> None:
         self._output_mode: OutputMode = output_mode
         self._client = client or LocalOllamaClient(
-            endpoint, timeout=timeout, num_predict=num_predict, num_ctx=num_ctx
+            endpoint,
+            timeout=timeout,
+            num_predict=num_predict,
+            num_ctx=num_ctx,
+            keep_alive=keep_alive,
         )
 
     @property
@@ -55,36 +60,23 @@ class LocalInference:
 
     @classmethod
     def from_settings(
-        cls, settings: Settings, *, client: LocalOllamaClient | None = None
+        cls,
+        settings: Settings,
+        *,
+        role: str = "main",
+        client: LocalOllamaClient | None = None,
     ) -> LocalInference:
-        """Build an adapter from database-owned settings."""
+        """Build an adapter from database-owned settings for one model role."""
+        keep_alive = getattr(settings.model_keep_alive, role, settings.model_keep_alive.main)
         return cls(
             endpoint=settings.endpoint,
             output_mode=settings.output_mode,
             timeout=settings.request_timeout_s,
             num_predict=settings.num_predict,
             num_ctx=settings.num_ctx,
+            keep_alive=keep_alive,
             client=client,
         )
-
-    def health(self) -> bool:
-        """Return whether the local server answers a bounded inventory request."""
-        try:
-            self._client.registry.list_models()
-        except LocalClientError:
-            return False
-        return True
-
-    def verify_model(self, model: str) -> LocalModelInfo:
-        """Return verified local metadata for a model.
-
-        Raises:
-            InferenceError: If the model is not a verified local model.
-        """
-        try:
-            return self._client.registry.show_model(model)
-        except LocalClientError as exc:
-            raise InferenceError(exc.category) from None
 
     def complete[ModelT: BaseModel](
         self,
@@ -95,22 +87,23 @@ class LocalInference:
         output_mode: OutputMode | None = None,
         images: Sequence[str] = (),
         require_vision: bool = False,
+        keep_alive: str | None = None,
     ) -> StructuredResult[ModelT]:
-        """Run one validated structured completion.
+        """Run one strict-schema completion and return validated data.
 
         Args:
-            model: Local model reference.
-            messages: System/user/assistant messages.
-            schema: Pydantic schema for strict output validation.
+            model: Verified local model reference.
+            messages: Chat messages.
+            schema: Strict Pydantic output schema.
             output_mode: Optional per-call mode override.
-            images: Optional base64 image payloads.
+            images: Optional base64 images.
             require_vision: Force the vision capability check.
 
         Returns:
-            The validated response with metrics and the mode used.
+            Validated data, timing metrics, and the mode used.
 
         Raises:
-            InferenceError: On any transport, capability, or schema failure.
+            InferenceError: On transport, capability, or schema failure.
         """
         mode = output_mode or self._output_mode
         try:
@@ -121,6 +114,28 @@ class LocalInference:
                 output_mode=mode,
                 images=images,
                 require_vision=require_vision,
+                keep_alive=keep_alive,
             )
         except LocalClientError as exc:
             raise InferenceError(exc.category) from None
+
+
+def local_health(inference: LocalInference) -> bool:
+    """Return whether the local server answers a bounded inventory request."""
+    try:
+        inference.client.registry.list_models()
+    except LocalClientError:
+        return False
+    return True
+
+
+def verify_model(inference: LocalInference, model: str) -> LocalModelInfo:
+    """Return verified local metadata for a model.
+
+    Raises:
+        InferenceError: If the model is not a verified local model.
+    """
+    try:
+        return inference.client.registry.show_model(model)
+    except LocalClientError as exc:
+        raise InferenceError(exc.category) from None

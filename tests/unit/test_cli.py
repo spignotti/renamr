@@ -1,181 +1,286 @@
-"""CLI tests."""
+"""v2 CLI bootstrap, preview/apply, compatibility, and rejection tests."""
 
 from __future__ import annotations
 
 from importlib.metadata import version
 from pathlib import Path
-from types import SimpleNamespace
 from typing import cast
 
 import click
-import pytest
-from litellm.exceptions import AuthenticationError
 from typer.main import get_command
 from typer.testing import CliRunner
 
-import renamr.cli as cli_module
-import renamr.metadata as metadata_module
+import renamr.cli.run as run_module
+from renamr.benchmark_schema import RulePredicate
 from renamr.cli import app
+from renamr.cli.common import CliError
+from renamr.core import workflow
+from renamr.core.extract_runner import InProcessRunner
+from renamr.core.roots import RootRole
+from renamr.core.settings import load_settings
+from renamr.core.workspace import Workspace
+from tests.unit.core_support import FakeExtractor
 
 runner = CliRunner()
 
 
-def test_version_command_outputs_version() -> None:
+def _prepared(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """Create a private workspace, two roots, an active rule, and one document."""
+    state = tmp_path / "state"
+    config = tmp_path / "config.toml"
+    workspace = Workspace.bootstrap(state, config_path=config)
+    inbox, archive = tmp_path / "inbox", tmp_path / "archive"
+    inbox.mkdir()
+    archive.mkdir()
+    inbox_root = workflow.register_root(workspace, inbox, role=RootRole.INBOX)
+    archive_root = workflow.register_root(workspace, archive, role=RootRole.ARCHIVE)
+    workflow.set_allowed_targets(workspace, inbox_root.root_id, [archive_root.root_id])
+    draft = workflow.create_rule_draft(
+        workspace,
+        scope_root_id=inbox_root.root_id,
+        target_root_id=archive_root.root_id,
+        predicates=[RulePredicate(field="document_type", operator="equals", values=["invoice"])],
+        filename_template="{date}_{subject}",
+        target_subdir="invoices",
+    )
+    workflow.mark_tested(workspace, draft.rule_id)
+    workflow.activate_rule(workspace, draft.rule_id)
+    (inbox / "scan.txt").write_text("Rechnung von Beispiel\nRechnungsdatum: 2026-03-14")
+    workspace.extractor = FakeExtractor(document_type="invoice")
+    workspace.runner = InProcessRunner()
+    workflow.scan(workspace, inbox_root.root_id)
+    return config, inbox, archive
+
+
+def test_version_does_not_create_state(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "statehome"))
     result = runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
     assert version("renamr") in result.stdout
+    assert not (tmp_path / "statehome").exists()
 
 
-def test_init_creates_config_from_package_data(tmp_path: Path, monkeypatch) -> None:
+def test_help_does_not_create_state(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "statehome"))
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "Local-first document catalog" in result.stdout
+    assert not (tmp_path / "statehome").exists()
+
+
+def test_init_creates_bootstrap_and_catalog(tmp_path: Path) -> None:
+    config = tmp_path / "new" / "config.toml"
+    state = tmp_path / "state"
+
+    result = runner.invoke(app, ["init", "--config", str(config), "--state-dir", str(state)])
+
+    assert result.exit_code == 0
+    assert config.exists()
+    assert (state / "catalog.sqlite3").is_file()
+
+
+def test_init_does_not_overwrite_existing_bootstrap(tmp_path: Path) -> None:
+    config = tmp_path / "config.toml"
+    state = tmp_path / "state"
+    Workspace.bootstrap(state, config_path=config)
+    original = config.read_text()
+
+    result = runner.invoke(app, ["init", "--config", str(config), "--state-dir", str(state)])
+
+    assert result.exit_code == 0
+    assert "already exists" in result.stdout
+    assert config.read_text() == original
+
+
+def test_init_legacy_preview_and_apply_leaves_source(tmp_path: Path) -> None:
     inbox = tmp_path / "inbox"
     inbox.mkdir()
-    config_dir = tmp_path / "config-home"
-    monkeypatch.setattr(cli_module, "_config_dir", lambda: config_dir)
-
-    result = runner.invoke(app, ["init"], input=f"{inbox}\nen\ngpt-4o-mini\n")
-
-    assert result.exit_code == 0
-    config_path = config_dir / "config.toml"
-    assert config_path.exists()
-    content = config_path.read_text()
-    assert "[[inbox]]" in content
-    assert f'path = "{inbox.resolve()}"' in content
-    assert 'language = "en"' in content
-    assert result.stdout.count(str(config_path)) == 1
-
-
-def test_init_does_not_call_mkdir_when_config_exists(tmp_path: Path, monkeypatch) -> None:
-    config_path = tmp_path / "existing-config" / "config.toml"
-    config_path.parent.mkdir(parents=True)
-    config_path.write_text('language = "en"\n')
-    mkdir_calls: list[Path] = []
-    original_mkdir = Path.mkdir
-
-    def tracking_mkdir(
-        self: Path,
-        mode: int = 0o777,
-        parents: bool = False,
-        exist_ok: bool = False,
-    ) -> None:
-        mkdir_calls.append(self)
-        original_mkdir(self, mode=mode, parents=parents, exist_ok=exist_ok)
-
-    monkeypatch.setattr(Path, "mkdir", tracking_mkdir)
-
-    result = runner.invoke(app, ["init", "--config", str(config_path)])
-
-    assert result.exit_code == 0
-    assert f"{config_path} already exists. Delete it to reinitialize." in result.stdout
-    assert mkdir_calls == []
-
-
-def test_run_dry_run_does_not_rename_files(tmp_path: Path, monkeypatch) -> None:
-    inbox = tmp_path / "inbox"
-    inbox.mkdir()
-    original_file = inbox / "note.txt"
-    original_file.write_text("Invoice Date 2024-01-31")
-    (tmp_path / "config.toml").write_text(
-        f'[[inbox]]\npath = "{inbox}"\nfile_extensions = [".txt"]\n'
+    legacy = tmp_path / "legacy.toml"
+    original = (
+        f'language = "de"\n[[inbox]]\npath = "{inbox}"\n'
+        '[llm]\nmodel = "ollama/gemma4:e4b"\napi_base = "http://127.0.0.1:11434"\n'
     )
+    legacy.write_text(original)
+    config = tmp_path / "bootstrap.toml"
+    state = tmp_path / "state"
 
-    monkeypatch.setattr(
-        metadata_module,
-        "completion",
-        lambda **_: SimpleNamespace(
-            choices=[
-                SimpleNamespace(
-                    message=SimpleNamespace(
-                        content=(
-                            '{"sender":"ACME","subject":"Invoice",'
-                            '"date":"2024-01-31","filename_format":"date_sender_subject"}'
-                        )
-                    )
-                )
-            ]
-        ),
+    preview = runner.invoke(
+        app,
+        [
+            "init",
+            "--legacy-config",
+            str(legacy),
+            "--config",
+            str(config),
+            "--state-dir",
+            str(state),
+        ],
     )
+    assert preview.exit_code == 0
+    assert "Preview only" in preview.stdout
+    assert not (state / "catalog.sqlite3").exists()
 
-    result = runner.invoke(app, ["run", "--config", str(tmp_path / "config.toml"), "--dry-run"])
+    applied = runner.invoke(
+        app,
+        [
+            "init",
+            "--legacy-config",
+            str(legacy),
+            "--config",
+            str(config),
+            "--state-dir",
+            str(state),
+            "--apply",
+        ],
+    )
+    assert applied.exit_code == 0
+    assert legacy.read_text() == original
+    assert load_settings(Workspace.open(config_path=config).db).languages == ["de"]
 
-    assert result.exit_code == 0
-    assert original_file.exists()
-    assert "note.txt -> 240131_ACME_Invoice.txt" in result.stdout
+
+def test_run_preview_does_not_move_and_apply_does(tmp_path: Path, monkeypatch) -> None:
+    config, inbox, archive = _prepared(tmp_path)
+    monkeypatch.setattr(run_module, "catalog_then_features", lambda *_args, **_kwargs: None)
+
+    preview = runner.invoke(app, ["run", "--config", str(config)])
+
+    assert preview.exit_code == 0
+    assert "Preview only" in preview.stdout
+    assert (inbox / "scan.txt").exists()
+
+    applied = runner.invoke(app, ["run", "--config", str(config), "--apply"])
+
+    assert applied.exit_code == 0
+    moved = archive / "invoices" / "2026-03-14_Rechnung.txt"
+    assert moved.exists()
+    assert not (inbox / "scan.txt").exists()
 
 
-def test_run_help_shows_expected_options() -> None:
+def test_run_rejects_compress_before_processing(tmp_path: Path) -> None:
+    config = tmp_path / "config.toml"
+    result = runner.invoke(app, ["run", "--config", str(config), "--compress"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, CliError)
+    assert "compression is not supported" in str(result.exception).lower()
+    assert not config.exists()
+
+
+def test_run_rejects_unregistered_inbox(tmp_path: Path, monkeypatch) -> None:
+    config, _, _ = _prepared(tmp_path)
+    monkeypatch.setattr(run_module, "catalog_then_features", lambda *_args, **_kwargs: None)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    result = runner.invoke(app, ["run", "--config", str(config), "--inbox", str(outside)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, CliError)
+    assert "not a registered root" in str(result.exception)
+
+
+def test_run_help_keeps_compatible_options() -> None:
     command = cast(click.Group, get_command(app))
     run_command = cast(click.Command, command.commands["run"])
     option_names = {
         option for param in run_command.params for option in [*param.opts, *param.secondary_opts]
     }
 
-    assert "--config" in option_names
-    assert "--dry-run" in option_names
-    assert "--compress" in option_names
-    assert "--inbox" in option_names
-    assert "--recursive" in option_names
-    assert "--verbose" in option_names
+    for expected in (
+        "--config",
+        "--inbox",
+        "--recursive",
+        "--no-recursive",
+        "--dry-run",
+        "--apply",
+        "--compress",
+        "--no-compress",
+        "--verbose",
+    ):
+        assert expected in option_names
 
 
-@pytest.mark.parametrize("verbose", [False, True])
-def test_auth_failure_stops_run_with_safe_diagnostics(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verbose: bool
-) -> None:
-    inbox = tmp_path / "inbox"
-    inbox.mkdir()
-    for name in ["first.txt", "second.txt"]:
-        (inbox / name).write_text("Synthetic invoice")
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(f'[[inbox]]\npath = "{inbox}"\n')
-    calls: list[object] = []
+def test_config_show_and_set(tmp_path: Path) -> None:
+    config, _, _ = _prepared(tmp_path)
 
-    def failing_completion(**kwargs: object) -> None:
-        calls.append(kwargs)
-        raise AuthenticationError(
-            message="SYNTHETIC_PROVIDER_BODY", llm_provider="openrouter", model="test"
-        )
+    shown = runner.invoke(app, ["config", "show", "--config", str(config)])
+    assert shown.exit_code == 0
+    assert "model_roles" in shown.stdout
 
-    monkeypatch.setattr(metadata_module, "completion", failing_completion)
-    args = ["run", "--config", str(config_path)] + (["--verbose"] if verbose else [])
-    result = runner.invoke(app, args)
-
-    assert result.exit_code == 1
-    assert len(calls) == 1
-    assert "OPENROUTER_API_KEY" in result.output
-    assert "infisical run -- renamr run" in result.output
-    assert "Run stopped" in result.output
-    assert "Diagnostics:" in result.output
-    assert "SYNTHETIC_PROVIDER_BODY" not in result.output
-    assert "Traceback (most recent call last)" not in result.output
-    assert (
-        "file_processing_failed" in result.output
-        if verbose
-        else ("file_processing_failed" not in result.output)
+    changed = runner.invoke(
+        app,
+        ["config", "set", "default_filename_template", "{date}_{subject}", "--config", str(config)],
     )
-    log = (tmp_path / "renamr.log").read_text()
-    assert log.count("file_processing_failed") == 1
-    assert "AuthenticationError" in log
-    assert "SYNTHETIC_PROVIDER_BODY" not in log
-    assert sorted(path.name for path in inbox.iterdir()) == ["first.txt", "second.txt"]
+    assert changed.exit_code == 0
+    assert load_settings(Workspace.open(config_path=config).db).default_filename_template == (
+        "{date}_{subject}"
+    )
 
 
-def test_invalid_config_shows_short_error(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.toml"
-    config_path.write_text("invalid = [")
-    result = runner.invoke(app, ["run", "--config", str(config_path)])
+def test_search_document_history_and_undo_journey(tmp_path: Path, monkeypatch) -> None:
+    config, inbox, archive = _prepared(tmp_path)
+    monkeypatch.setattr(run_module, "catalog_then_features", lambda *_args, **_kwargs: None)
+    applied = runner.invoke(app, ["run", "--config", str(config), "--apply"])
+    assert applied.exit_code == 0
+    workspace = Workspace.open(config_path=config)
+    revision_id = workflow.search(workspace, "Rechnung")[0].revision_id
 
-    assert result.exit_code == 1
-    assert "Invalid configuration" in result.output
-    assert "Diagnostics:" in result.output
-    assert "Traceback" not in result.output
+    searched = runner.invoke(app, ["search", "Rechnung", "--config", str(config)])
+    assert searched.exit_code == 0
+    assert revision_id in searched.stdout
+
+    document = runner.invoke(app, ["document", "show", revision_id, "--config", str(config)])
+    assert document.exit_code == 0
+    assert "quality" in document.stdout
+
+    history = runner.invoke(app, ["history", "--config", str(config)])
+    assert history.exit_code == 0
+    run_id = str(history.stdout.split()[0])
+
+    undone = runner.invoke(app, ["undo", "--yes", "--config", str(config)])
+    assert undone.exit_code == 0
+    assert (inbox / "scan.txt").exists()
+    assert not (archive / "invoices" / "2026-03-14_Rechnung.txt").exists()
+    assert run_id
 
 
-def test_missing_inbox_shows_short_error(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(f'[[inbox]]\npath = "{tmp_path / "missing"}"\n')
-    result = runner.invoke(app, ["run", "--config", str(config_path)])
+def test_onboard_registers_sibling_roots_without_inference(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    config = tmp_path / "config.toml"
+    Workspace.bootstrap(state, config_path=config)
+    for name in ("Inbox", "Areas", "Archive"):
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "note.txt").write_text("synthetic text")
 
-    assert result.exit_code == 1
-    assert "File or inbox path does not exist" in result.output
-    assert "Traceback" not in result.output
+    result = runner.invoke(
+        app,
+        [
+            "onboard",
+            "--inbox",
+            str(tmp_path / "Inbox"),
+            "--library",
+            str(tmp_path / "Areas"),
+            "--archive",
+            str(tmp_path / "Archive"),
+            "--no-questions",
+            "--config",
+            str(config),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert len(workflow.list_roots(Workspace.open(config_path=config))) == 3
+    assert "no document was modified" in result.stdout.lower()
+
+
+def test_review_json_is_noninteractive(tmp_path: Path) -> None:
+    config, _, _ = _prepared(tmp_path)
+    result = runner.invoke(app, ["review", "--json", "--config", str(config)])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip().startswith("[")

@@ -7,11 +7,17 @@ Every helper is synthetic and touches only temporary directories.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pymupdf
 from PIL import Image
 
-from renamr.benchmark_schema import DocumentFeatures, FeatureValidation, GroundingEvidence
+from renamr.benchmark_schema import (
+    DocumentFeatures,
+    DocumentType,
+    FeatureValidation,
+    GroundingEvidence,
+)
 from renamr.core.extract import OCRText
 from renamr.core.features import FeatureExtraction, FeatureRequest
 
@@ -103,7 +109,7 @@ class FakeExtractor:
         *,
         document_type: str = "invoice",
         issuer: str | None = None,
-        date: str | None = None,
+        date: str | None = "2026-03-14",
         needs_review: bool = False,
         evidence: bool = True,
     ) -> None:
@@ -132,7 +138,7 @@ class FakeExtractor:
             else []
         )
         features = DocumentFeatures(
-            document_type=self._document_type,  # type: ignore[arg-type]
+            document_type=cast("DocumentType", self._document_type),
             issuer=self._issuer,
             date=self._date,
             subject="Rechnung",

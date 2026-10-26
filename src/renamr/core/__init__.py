@@ -7,6 +7,7 @@ symbols from this package rather than reaching into submodules.
 from __future__ import annotations
 
 from renamr.benchmark_schema import RulePredicate
+from renamr.core.budget import ScanBudget
 from renamr.core.catalog import (
     FactRecord,
     LocationRecord,
@@ -16,7 +17,14 @@ from renamr.core.catalog import (
     QualityState,
     RevisionRecord,
 )
+from renamr.core.contracts import (
+    ContractFactRecord,
+    ContractRecord,
+    ContractRefreshResult,
+    GroupEntry,
+)
 from renamr.core.db import Database
+from renamr.core.dialog import DialogProposal, DialogResponse
 from renamr.core.errors import (
     CoreError,
     DatabaseCorruptError,
@@ -27,6 +35,7 @@ from renamr.core.errors import (
     RuleError,
     StateError,
 )
+from renamr.core.examples import Example, ManualMoveObservation
 from renamr.core.extract import (
     AssetStatus,
     ExtractionResult,
@@ -51,9 +60,11 @@ from renamr.core.features import (
     feature_cache_key,
     text_extract_key,
 )
+from renamr.core.folders import FolderOverride
 from renamr.core.history import LegacyUndoPreview, UndoCandidate, UndoOutcome
 from renamr.core.inference import LocalInference
 from renamr.core.journal import FaultInjector, FaultPoint, ItemState
+from renamr.core.learning import RuleCandidate, RuleImpact
 from renamr.core.lock import WriterLock
 from renamr.core.migration import (
     MigrationPreview,
@@ -74,8 +85,10 @@ from renamr.core.mutation import (
 )
 from renamr.core.operations import ApplyResult, RecoveryResult, RunItem
 from renamr.core.reconcile import ScanOutcome, ScanStatus
+from renamr.core.review import ReviewQuestion
 from renamr.core.roots import Root, RootRole
 from renamr.core.rules import RoutingDecision, Rule, RuleStatus, render_base_name, select_rule
+from renamr.core.scheduler import ServiceStatus, TickResult
 from renamr.core.settings import (
     DEFAULT_SETTINGS,
     ModelRoles,
@@ -83,6 +96,7 @@ from renamr.core.settings import (
     load_settings,
     save_settings,
 )
+from renamr.core.structure import FolderMapping, StructureApplyResult, StructureDraft, StructurePlan
 from renamr.core.workflow import (
     activate_rule,
     active_rules,
@@ -107,11 +121,17 @@ __all__ = [
     "DEFAULT_SETTINGS",
     "ApplyResult",
     "AssetStatus",
+    "ContractFactRecord",
+    "ContractRecord",
+    "ContractRefreshResult",
     "CoreError",
     "Database",
     "DatabaseCorruptError",
     "DatabaseNewerVersionError",
     "DestinationOccupiedError",
+    "DialogProposal",
+    "DialogResponse",
+    "Example",
     "ExtractionResult",
     "ExtractionRunner",
     "ExtractorLimits",
@@ -121,12 +141,16 @@ __all__ = [
     "FeatureExtraction",
     "FeatureExtractor",
     "FeatureRequest",
+    "FolderMapping",
+    "FolderOverride",
+    "GroupEntry",
     "InProcessRunner",
     "ItemState",
     "LegacyUndoPreview",
     "LocalFeatureExtractor",
     "LocalInference",
     "LocationRecord",
+    "ManualMoveObservation",
     "MigrationPreview",
     "MigrationResult",
     "ModelRoles",
@@ -138,20 +162,29 @@ __all__ = [
     "Presence",
     "QualityState",
     "RecoveryResult",
+    "ReviewQuestion",
     "RevisionRecord",
     "Root",
     "RootRole",
     "RoutingDecision",
     "Rule",
+    "RuleCandidate",
     "RuleError",
+    "RuleImpact",
     "RulePredicate",
     "RuleStatus",
     "RunItem",
+    "ScanBudget",
     "ScanOutcome",
     "ScanStatus",
+    "ServiceStatus",
     "Settings",
     "StateError",
+    "StructureApplyResult",
+    "StructureDraft",
+    "StructurePlan",
     "SubprocessRunner",
+    "TickResult",
     "UndoCandidate",
     "UndoOutcome",
     "Workspace",

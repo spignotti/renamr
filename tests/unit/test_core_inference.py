@@ -6,7 +6,7 @@ import pytest
 
 from renamr.benchmark_schema import DocumentFeatures
 from renamr.core.errors import InferenceError
-from renamr.core.inference import LocalInference
+from renamr.core.inference import LocalInference, local_health
 from renamr.core.settings import DEFAULT_SETTINGS
 from renamr.local_client import LocalOllamaClient
 from renamr.local_transport import ChatMessage, EndpointValidationError
@@ -83,10 +83,10 @@ def test_inference_rejects_cloud_model(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_inference_health_reflects_server(monkeypatch: pytest.MonkeyPatch) -> None:
     client = LocalOllamaClient()
     install_server(monkeypatch, client, FakeServer())
-    assert LocalInference(client=client).health() is True
+    assert local_health(LocalInference(client=client)) is True
 
     install_connection(monkeypatch, 500, {"error": "boom"})
-    assert LocalInference(client=LocalOllamaClient()).health() is False
+    assert local_health(LocalInference(client=LocalOllamaClient())) is False
 
 
 def test_inference_blocks_redirect(monkeypatch: pytest.MonkeyPatch) -> None:

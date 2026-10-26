@@ -25,15 +25,24 @@ def preview_routing(ws: Workspace, root_id: str) -> str:
     Only active-rule matches on documents with validated, non-review facts and
     clean quality are planned; everything else stays in place with a review item.
     """
-    root = roots.get_root(ws.db, root_id)
     with ws.lock():
         run_id = operations.create_run(
             ws.db, kind="rename", root_id=root_id, rule_policy_version="rules-v1"
         )
-        active = rules.active_rules(ws.db)
-        for location in catalog.locations_for_root(ws.db, root.root_id):
-            _plan_location(ws, root, location, active, run_id)
+        plan_routing_locked(ws, root_id, run_id)
     return run_id
+
+
+def plan_routing_locked(ws: Workspace, root_id: str, run_id: str) -> int:
+    """Plan routing for one root while the caller already holds the writer lock."""
+    root = roots.get_root(ws.db, root_id)
+    active = rules.active_rules(ws.db)
+    planned = 0
+    for location in catalog.locations_for_root(ws.db, root.root_id):
+        before = len(operations.run_items(ws.db, run_id))
+        _plan_location(ws, root, location, active, run_id)
+        planned += len(operations.run_items(ws.db, run_id)) - before
+    return planned
 
 
 def apply(
@@ -94,7 +103,7 @@ def run_items(ws: Workspace, run_id: str) -> list[RunItem]:
     return operations.run_items(ws.db, run_id)
 
 
-def _boundary_guard(ws: Workspace) -> RunGuard:
+def boundary_guard(ws: Workspace) -> RunGuard:
     """Return a guard keeping the source and target inside live registered roots."""
 
     def guard(item: RunItem) -> None:
@@ -103,6 +112,9 @@ def _boundary_guard(ws: Workspace) -> RunGuard:
             _require_registered(ws, item.target_path, what="target")
 
     return guard
+
+
+_boundary_guard = boundary_guard
 
 
 def _require_registered(ws: Workspace, path: Path, *, what: str) -> None:
@@ -118,7 +130,7 @@ def _require_registered(ws: Workspace, path: Path, *, what: str) -> None:
         raise PreconditionError(f"{what} is outside its registered root") from None
 
 
-def _routing_guard(ws: Workspace, run: dict[str, object]) -> RunGuard:
+def routing_guard(ws: Workspace, run: dict[str, object]) -> RunGuard:
     """Return a guard that rechecks allowed targets and active rule revisions.
 
     Allowed targets, the active rule revision, and the registered roots are read
@@ -138,6 +150,9 @@ def _routing_guard(ws: Workspace, run: dict[str, object]) -> RunGuard:
             _require_allowed_target(ws, source_root_id, target)
 
     return guard
+
+
+_routing_guard = routing_guard
 
 
 def _require_allowed_target(ws: Workspace, source_root_id: str, target: Path) -> None:
@@ -232,21 +247,12 @@ def _plan_routed(
     run_id: str,
 ) -> None:
     """Persist one routed rename item after validating the target."""
-    try:
-        roots.require_allowed_target(ws.db, root.root_id, decision.target_root_id or "")
-        target_root = roots.get_root(ws.db, decision.target_root_id or "")
-        target_dir = roots.resolve_subpath(target_root, decision.target_subdir)
-    except CoreError as exc:
-        catalog.record_review(
-            ws.db,
-            kind="target_rejected",
-            detail=exc.category,
-            revision_id=revision.revision_id,
-            location_id=location.location_id,
-        )
+    target_dir = _target_directory(ws, root, location, revision, decision)
+    if target_dir is None:
         return
-    base = rules.render_base_name(decision.filename_template or "", _filename_fields(features))
-    target_path = target_dir / f"{base}{location.canonical_path.suffix.lower()}"
+    target_path = _target_path(ws, location, revision, decision, features, target_dir)
+    if target_path is None:
+        return
     observed = _indexed_fingerprint(ws, location, revision)
     if observed is None:
         return
@@ -266,6 +272,53 @@ def _plan_routed(
         source_ino=observed.ino,
         source_mtime_ns=observed.mtime_ns,
     )
+
+
+def _target_directory(
+    ws: Workspace,
+    root: Root,
+    location: catalog.LocationRecord,
+    revision: catalog.RevisionRecord,
+    decision: rules.RoutingDecision,
+) -> Path | None:
+    """Validate the allowed target root and return its resolved directory."""
+    try:
+        roots.require_allowed_target(ws.db, root.root_id, decision.target_root_id or "")
+        target_root = roots.get_root(ws.db, decision.target_root_id or "")
+        return roots.resolve_subpath(target_root, decision.target_subdir)
+    except CoreError as exc:
+        catalog.record_review(
+            ws.db,
+            kind="target_rejected",
+            detail=exc.category,
+            revision_id=revision.revision_id,
+            location_id=location.location_id,
+        )
+        return None
+
+
+def _target_path(
+    ws: Workspace,
+    location: catalog.LocationRecord,
+    revision: catalog.RevisionRecord,
+    decision: rules.RoutingDecision,
+    features: DocumentFeatures,
+    target_dir: Path,
+) -> Path | None:
+    """Render a name or record a review when a required value is missing."""
+    fields = _filename_fields(features)
+    missing = _missing_naming_fields(decision.filename_template or "", fields)
+    if missing:
+        catalog.record_review(
+            ws.db,
+            kind="naming_field_missing",
+            detail=f"{decision.rule_id}|{missing[0]}",
+            revision_id=revision.revision_id,
+            location_id=location.location_id,
+        )
+        return None
+    base = rules.render_base_name(decision.filename_template or "", fields)
+    return target_dir / f"{base}{location.canonical_path.suffix.lower()}"
 
 
 def _indexed_fingerprint(
@@ -296,6 +349,19 @@ def _filename_fields(features: DocumentFeatures) -> dict[str, str]:
         "subject": features.subject or "",
         "document_type": features.document_type,
     }
+
+
+def _missing_naming_fields(template: str, fields: dict[str, str]) -> list[str]:
+    """Return template placeholders with no confirmed value.
+
+    A missing value never becomes a literal ``Unknown`` filename that is filed
+    automatically; the document stays in place behind a review question.
+    """
+    missing: list[str] = []
+    for placeholder in ("date", "sender", "subject", "document_type"):
+        if "{" + placeholder + "}" in template and not fields.get(placeholder, "").strip():
+            missing.append(placeholder)
+    return missing
 
 
 def _relative(path: Path, root: Path) -> str:

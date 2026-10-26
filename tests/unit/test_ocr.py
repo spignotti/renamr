@@ -51,7 +51,7 @@ class TestOcrImage:
         monkeypatch.setattr(
             ocr_module,
             "_get_engine",
-            lambda: (lambda _: fake_result),
+            lambda: lambda _: fake_result,
         )
 
         result = ocr_image(img_path)
@@ -69,7 +69,7 @@ class TestOcrImage:
         monkeypatch.setattr(
             ocr_module,
             "_get_engine",
-            lambda: (lambda _: fake_result),
+            lambda: lambda _: fake_result,
         )
 
         result = ocr_image(img_path)

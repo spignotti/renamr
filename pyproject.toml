@@ -1,7 +1,7 @@
 [project]
 name = "renamr"
-version = "1.4.1"
-description = "CLI tool that renames local files using AI-powered metadata extraction"
+version = "2.0.0"
+description = "Local-first document catalog, cautious routing, and read-only contract sharing"
 authors = [
     { name = "Silas Pignotti", email = "pignottisilas@gmail.com" }
 ]
@@ -9,12 +9,11 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "litellm>=1.100.1",
+    "mcp>=2.3.0",
     "onnxruntime>=1.17.0,<1.24",
     "pillow>=12.3.0",
     "pydantic>=2.12.5",
     "pymupdf>=1.27.2",
-    "pypdf>=6.19.0",
     "rapidocr>=3.9.0",
     "structlog>=25.5.0",
     "typer>=0.24.1",

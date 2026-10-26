@@ -38,6 +38,7 @@ class Root(BaseModel):
     canonical_path: Path
     role: RootRole
     description: str = ""
+    alias: str = ""
     trusted_examples: bool = False
     automation_enabled: bool = False
     allowed_target_ids: list[str] = []
@@ -50,6 +51,7 @@ def register_root(
     role: RootRole,
     state_dir: Path,
     description: str = "",
+    alias: str = "",
     trusted_examples: bool = False,
     automation_enabled: bool = False,
     allowed_targets: list[str] | None = None,
@@ -80,6 +82,7 @@ def register_root(
         canonical=canonical,
         role=role,
         description=description,
+        alias=alias,
         trusted_examples=trusted_examples,
         automation_enabled=automation_enabled,
         targets=targets,
@@ -104,6 +107,7 @@ def _insert_root(
     canonical: Path,
     role: RootRole,
     description: str,
+    alias: str,
     trusted_examples: bool,
     automation_enabled: bool,
     targets: list[str],
@@ -113,13 +117,15 @@ def _insert_root(
     now = datetime.now(UTC).isoformat()
     with db.transaction() as connection:
         connection.execute(
-            "INSERT INTO roots (root_id, canonical_path, role, description, trusted_examples, "
-            "automation_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO roots (root_id, canonical_path, role, description, alias, "
+            "trusted_examples, automation_enabled, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 root_id,
                 str(canonical),
                 str(role),
                 description,
+                alias,
                 int(trusted_examples),
                 int(automation_enabled),
                 now,
@@ -136,6 +142,7 @@ def _insert_root(
         canonical_path=canonical,
         role=role,
         description=description,
+        alias=alias,
         trusted_examples=trusted_examples,
         automation_enabled=automation_enabled,
         allowed_target_ids=targets,
@@ -187,6 +194,34 @@ def _require_targets(connection: sqlite3.Connection, targets: list[str]) -> None
         row = connection.execute("SELECT 1 FROM roots WHERE root_id = ?", (target,)).fetchone()
         if row is None:
             raise RootError("allowed target references an unknown root id")
+
+
+def update_root(
+    db: Database,
+    root_id: str,
+    *,
+    description: str | None = None,
+    alias: str | None = None,
+    trusted_examples: bool | None = None,
+    automation_enabled: bool | None = None,
+) -> Root:
+    """Update descriptive root fields, leaving unspecified values unchanged."""
+    root = get_root(db, root_id)
+    now = datetime.now(UTC).isoformat()
+    with db.transaction() as connection:
+        connection.execute(
+            "UPDATE roots SET description = ?, alias = ?, trusted_examples = ?, "
+            "automation_enabled = ?, updated_at = ? WHERE root_id = ?",
+            (
+                root.description if description is None else description,
+                root.alias if alias is None else alias,
+                int(root.trusted_examples if trusted_examples is None else trusted_examples),
+                int(root.automation_enabled if automation_enabled is None else automation_enabled),
+                now,
+                root_id,
+            ),
+        )
+    return get_root(db, root_id)
 
 
 def list_roots(db: Database) -> list[Root]:
@@ -374,6 +409,7 @@ def _row_to_root(connection: sqlite3.Connection, row: sqlite3.Row) -> Root:
         canonical_path=Path(str(row["canonical_path"])),
         role=RootRole(str(row["role"])),
         description=str(row["description"]),
+        alias=str(row["alias"]),
         trusted_examples=bool(row["trusted_examples"]),
         automation_enabled=bool(row["automation_enabled"]),
         allowed_target_ids=[str(item["target_root_id"]) for item in targets],

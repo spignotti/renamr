@@ -232,6 +232,8 @@ def _attempts(db: Database, revision_id: str) -> int:
 
 def _update(db: Database, revision_id: str, fields: dict[str, object]) -> None:
     """Apply an allowlisted set of revision columns in one short transaction."""
+    from renamr.core import catalog
+
     allowed = (
         "extract_key",
         "feature_key",
@@ -241,12 +243,25 @@ def _update(db: Database, revision_id: str, fields: dict[str, object]) -> None:
         "next_retry_at",
         "error_category",
     )
-    assignments = [f"{key} = ?" for key in fields if key in allowed]
-    values = [value for key, value in fields.items() if key in allowed]
-    if not assignments:
+    filtered = {key: value for key, value in fields.items() if key in allowed}
+    if not filtered:
         return
+    revision = catalog.get_revision(db, revision_id)
+    values = {name: getattr(revision, name) for name in allowed}
+    values.update(filtered)
     with db.transaction() as connection:
         connection.execute(
-            f"UPDATE revisions SET {', '.join(assignments)} WHERE revision_id = ?",
-            (*values, revision_id),
+            "UPDATE revisions SET extract_key = ?, feature_key = ?, quality_state = ?, "
+            "failed_stage = ?, attempts = ?, next_retry_at = ?, error_category = ? "
+            "WHERE revision_id = ?",
+            (
+                values["extract_key"],
+                values["feature_key"],
+                values["quality_state"],
+                values["failed_stage"],
+                values["attempts"],
+                values["next_retry_at"],
+                values["error_category"],
+                revision_id,
+            ),
         )

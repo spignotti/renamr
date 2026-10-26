@@ -9,11 +9,10 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-import litellm
 import structlog
 from structlog.types import EventDict
 
-NOISY_DEPENDENCY_LOGGERS = ("httpx", "httpcore", "litellm", "LiteLLM", "openai", "RapidOCR")
+NOISY_DEPENDENCY_LOGGERS = ("httpx", "httpcore", "openai", "RapidOCR")
 
 
 def _private_opener(path: str, flags: int) -> int:
@@ -72,7 +71,6 @@ def setup_logging(
     )
     logging.getLogger("renamr").setLevel(getattr(logging, level.upper(), logging.WARNING))
     configure_dependency_loggers()
-    litellm.suppress_debug_info = True
     renderer = (
         structlog.processors.JSONRenderer()
         if json_logs

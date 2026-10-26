@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DATABASE_APPLICATION_ID = 0x524E4D52
 
 
@@ -269,4 +269,114 @@ _MIGRATION_1 = (
     """,
 )
 
-MIGRATIONS: tuple[Migration, ...] = (Migration(version=1, statements=_MIGRATION_1),)
+_MIGRATION_2 = (
+    "ALTER TABLE roots ADD COLUMN alias TEXT NOT NULL DEFAULT ''",
+    """
+    CREATE TABLE folder_overrides (
+        root_id TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        alias TEXT NOT NULL DEFAULT '',
+        filename_template TEXT,
+        target_root_id TEXT,
+        target_subdir TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (root_id, relative_path),
+        FOREIGN KEY (root_id) REFERENCES roots (root_id) ON DELETE CASCADE,
+        FOREIGN KEY (target_root_id) REFERENCES roots (root_id)
+    )
+    """,
+    """
+    CREATE TABLE manual_move_observations (
+        observation_id TEXT PRIMARY KEY,
+        revision_id TEXT NOT NULL,
+        old_location_id TEXT NOT NULL,
+        new_location_id TEXT NOT NULL,
+        old_path TEXT NOT NULL,
+        new_path TEXT NOT NULL,
+        match_kind TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'candidate',
+        example_id TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (revision_id) REFERENCES revisions (revision_id) ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE TABLE structure_plans (
+        plan_id TEXT PRIMARY KEY,
+        root_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        state TEXT NOT NULL DEFAULT 'draft',
+        payload TEXT NOT NULL,
+        run_id TEXT,
+        rule_fingerprint TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        applied_at TEXT,
+        FOREIGN KEY (root_id) REFERENCES roots (root_id) ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE TABLE structure_items (
+        item_id TEXT PRIMARY KEY,
+        plan_id TEXT NOT NULL,
+        source_path TEXT NOT NULL,
+        target_path TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        rule_id TEXT,
+        rule_revision INTEGER,
+        state TEXT NOT NULL DEFAULT 'planned',
+        error TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (plan_id) REFERENCES structure_plans (plan_id) ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE TABLE proposals (
+        proposal_id TEXT PRIMARY KEY,
+        intent TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'proposed',
+        decision TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        decided_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE contract_members (
+        contract_id TEXT NOT NULL,
+        root_id TEXT NOT NULL,
+        relative_path TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (contract_id, root_id, relative_path),
+        FOREIGN KEY (contract_id) REFERENCES contracts (contract_id) ON DELETE CASCADE,
+        FOREIGN KEY (root_id) REFERENCES roots (root_id) ON DELETE CASCADE
+    )
+    """,
+    "ALTER TABLE contract_facts ADD COLUMN evidence_quote TEXT",
+    "ALTER TABLE contract_facts ADD COLUMN source_document_type TEXT",
+    "ALTER TABLE contract_facts ADD COLUMN effective_date TEXT",
+    "ALTER TABLE contract_facts ADD COLUMN relationship TEXT",
+    "ALTER TABLE contract_facts ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+    """
+    CREATE UNIQUE INDEX idx_mcp_permission_unique
+        ON mcp_permissions (contract_id, field)
+    """,
+    """
+    CREATE INDEX idx_manual_moves_status
+        ON manual_move_observations (status)
+    """,
+    """
+    CREATE INDEX idx_contract_members_root
+        ON contract_members (root_id)
+    """,
+    """
+    CREATE INDEX idx_structure_items_plan
+        ON structure_items (plan_id)
+    """,
+)
+
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration(version=1, statements=_MIGRATION_1),
+    Migration(version=2, statements=_MIGRATION_2),
+)

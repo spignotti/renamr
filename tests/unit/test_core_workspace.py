@@ -86,7 +86,7 @@ def test_scan_route_apply_search_undo(tmp_path: Path) -> None:
     result = mutation.apply(workspace, run_id)
     assert result.committed == 1
     assert not document.exists()
-    moved = archive / "invoices" / f"Unknown_Rechnung{document.suffix}"
+    moved = archive / "invoices" / f"2026-03-14_Rechnung{document.suffix}"
     assert moved.exists()
     assert _hash(moved) == original_hash
 

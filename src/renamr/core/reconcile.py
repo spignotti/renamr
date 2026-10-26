@@ -20,13 +20,13 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from renamr.core import catalog, processing
+from renamr.core.budget import BudgetTracker, ScanBudget
 from renamr.core.catalog import PageRecord, Presence, QualityState
 from renamr.core.db import Database
-from renamr.core.extract import ExtractorLimits, detect_media_type
+from renamr.core.extract import ExtractorLimits, detect_media_type, estimate_page_count
 from renamr.core.extract_runner import ExtractionResult, ExtractionRunner, SubprocessRunner
 from renamr.core.features import FeatureExtractor, FeatureRequest, features_to_facts
 from renamr.core.hashing import exceeds_limit, fingerprint, stat_matches
-from renamr.core.journal import TERMINAL_STATES
 from renamr.core.paths import is_within
 from renamr.core.roots import Root, list_roots
 from renamr.core.settings import Settings, load_settings
@@ -60,6 +60,10 @@ class ScanOutcome(BaseModel):
     unchanged: int = 0
     extracted: int = 0
     features_run: int = 0
+    model_calls: int = 0
+    pages_extracted: int = 0
+    deferred: int = 0
+    budget_exhausted: bool = False
     missing: int = 0
     reviews: int = 0
     skipped: int = 0
@@ -77,11 +81,14 @@ def scan_root(
     settings: Settings | None = None,
     wait_stable: bool = True,
     model_digest: str = "",
+    budget: ScanBudget | None = None,
 ) -> ScanOutcome:
     """Scan one registered root incrementally and update the catalog.
 
     An unavailable root is reported without deletions. Tests inject
-    :class:`InProcessRunner`; production uses the bounded subprocess runner.
+    :class:`InProcessRunner`; production uses the bounded subprocess runner. A
+    budget stops work between documents and defers a file whose page count does
+    not fit the remaining page budget.
     """
     effective = settings or load_settings(db)
     bounds = limits or limits_from_settings(effective)
@@ -90,20 +97,14 @@ def scan_root(
         return ScanOutcome(root_id=root.root_id, status=ScanStatus.UNAVAILABLE)
     keys = _scan_keys(effective, extractor, bounds, model_digest)
     outcome = ScanOutcome(root_id=root.root_id, status=ScanStatus.OK)
-    seen: set[str] = set()
-    new_hashes: dict[str, list[str]] = {}
-    for path in _iter_candidates(root.canonical_path, list_roots(db)):
-        if path.suffix.lower() not in SUPPORTED_SUFFIXES:
-            outcome.skipped += 1
-            continue
-        if wait_stable and _recently_modified(path, effective.stability_window_s):
-            outcome.skipped += 1
-            continue
-        seen.add(str(path))
-        _scan_candidate(db, root, path, extraction, extractor, bounds, keys, outcome, new_hashes)
-    outcome.discovered = len(seen)
+    tracker = (
+        BudgetTracker(budget, allow_models=extractor is not None) if budget is not None else None
+    )
+    seen, new_hashes = _scan_candidates(
+        db, root, extraction, extractor, bounds, keys, outcome, tracker, wait_stable, effective
+    )
     _reconcile_missing(db, root, seen, new_hashes, outcome)
-    if outcome.reviews or outcome.errors or outcome.oversized:
+    if outcome.reviews or outcome.errors or outcome.oversized or outcome.deferred:
         outcome.status = ScanStatus.PARTIAL
     return outcome
 
@@ -146,6 +147,45 @@ def _scan_keys(
     return _ScanKeys(extract=extract_key, feature=feature_key)
 
 
+def _scan_candidates(
+    db: Database,
+    root: Root,
+    extraction: ExtractionRunner,
+    extractor: FeatureExtractor | None,
+    bounds: ExtractorLimits,
+    keys: _ScanKeys,
+    outcome: ScanOutcome,
+    tracker: BudgetTracker | None,
+    wait_stable: bool,
+    settings: Settings,
+) -> tuple[set[str], dict[str, list[str]]]:
+    """Walk candidates under one root and stop between documents at a budget."""
+    seen: set[str] = set()
+    new_hashes: dict[str, list[str]] = {}
+    for path in _iter_candidates(root.canonical_path, list_roots(db)):
+        if path.suffix.lower() not in SUPPORTED_SUFFIXES:
+            outcome.skipped += 1
+            continue
+        if wait_stable and _recently_modified(path, settings.stability_window_s):
+            outcome.skipped += 1
+            continue
+        if tracker is not None and tracker.exhausted():
+            outcome.budget_exhausted = True
+            break
+        if tracker is not None and _defer_large(db, path, tracker, outcome):
+            seen.add(str(path))
+            continue
+        seen.add(str(path))
+        before = (outcome.pages_extracted, outcome.model_calls)
+        worked = _scan_candidate(
+            db, root, path, extraction, extractor, bounds, keys, outcome, new_hashes
+        )
+        if tracker is not None and worked:
+            tracker.record(outcome, before)
+    outcome.discovered = len(seen)
+    return seen, new_hashes
+
+
 def _scan_candidate(
     db: Database,
     root: Root,
@@ -156,16 +196,20 @@ def _scan_candidate(
     keys: _ScanKeys,
     outcome: ScanOutcome,
     new_hashes: dict[str, list[str]],
-) -> None:
-    """Ingest one candidate (with a stat fast path) and process it."""
+) -> bool:
+    """Ingest one candidate (with a stat fast path) and process it.
+
+    Returns:
+        Whether extraction/feature work was performed for this candidate.
+    """
     try:
         info = path.stat()
     except OSError:
         outcome.skipped += 1
-        return
+        return False
     if exceeds_limit(info.st_size, limits.max_file_bytes):
         _record_oversized(db, path, outcome)
-        return
+        return False
     existing = catalog.get_location_by_path(db, path)
     revision_id, created, changed, new_location = _resolve_revision(
         db, root, path, existing, outcome
@@ -186,7 +230,23 @@ def _scan_candidate(
     )
     if stage is processing.Stage.SKIP:
         outcome.unchanged += 1
-        return
+        return False
+    _process_stage(db, path, revision_id, stage, runner, extractor, limits, keys, outcome)
+    return True
+
+
+def _process_stage(
+    db: Database,
+    path: Path,
+    revision_id: str,
+    stage: processing.Stage,
+    runner: ExtractionRunner,
+    extractor: FeatureExtractor | None,
+    limits: ExtractorLimits,
+    keys: _ScanKeys,
+    outcome: ScanOutcome,
+) -> None:
+    """Run the extraction and/or feature stage for one revision."""
     if stage is processing.Stage.EXTRACT:
         result = runner.run(path, limits)
         _store_extraction(db, revision_id, result, keys.extract, outcome)
@@ -239,6 +299,7 @@ def _store_extraction(
 ) -> None:
     """Persist extracted pages and the text-stage outcome."""
     catalog.set_pages(db, revision_id, result.pages)
+    outcome.pages_extracted += len(result.pages)
     for code in result.errors:
         _note(outcome.errors, code)
     quality = _quality(result, outcome)
@@ -285,6 +346,7 @@ def _run_features(
         return
     extraction = extractor.extract(FeatureRequest(page_texts=[page.text for page in pages]))
     outcome.features_run += 1
+    outcome.model_calls += max(1, extraction.chunks)
     if extraction.features is not None:
         catalog.set_facts(db, revision_id, features_to_facts(extraction.features))
         processing.record_feature_result(db, revision_id, feature_key=feature_key)
@@ -298,6 +360,26 @@ def _run_features(
     processing.record_feature_result(db, revision_id, feature_key=feature_key)
     catalog.record_review(db, kind="feature_blocked", detail=reason, revision_id=revision_id)
     outcome.reviews += 1
+
+
+def _defer_large(db: Database, path: Path, tracker: BudgetTracker, outcome: ScanOutcome) -> bool:
+    """Defer a changed file whose page count exceeds the remaining page budget."""
+    existing = catalog.get_location_by_path(db, path)
+    if existing is not None and _stat_unchanged(path, existing):
+        return False
+    room = tracker.page_room()
+    if room is None:
+        return False
+    estimate = estimate_page_count(path)
+    if estimate <= room:
+        return False
+    from renamr.core.facts import record_review_once
+
+    label = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
+    record_review_once(db, kind="scan_budget_deferred", detail=label)
+    outcome.deferred += 1
+    outcome.budget_exhausted = True
+    return True
 
 
 def _record_oversized(db: Database, path: Path, outcome: ScanOutcome) -> None:
@@ -372,13 +454,11 @@ def _reconcile_missing(
 
 def _active_own_operation(db: Database, canonical_path: str) -> bool:
     """Return whether an unconsumed own operation still covers a path."""
-    terminal = tuple(str(state) for state in TERMINAL_STATES)
-    placeholders = ", ".join("?" for _ in terminal)
     with db.read() as connection:
         row = connection.execute(
-            f"SELECT 1 FROM run_items WHERE (source_path = ? OR target_path = ?) "
-            f"AND state NOT IN ({placeholders}) LIMIT 1",
-            (canonical_path, canonical_path, *terminal),
+            "SELECT 1 FROM run_items WHERE (source_path = ? OR target_path = ?) "
+            "AND state NOT IN ('committed', 'noop', 'blocked', 'failed') LIMIT 1",
+            (canonical_path, canonical_path),
         ).fetchone()
     return row is not None
 

@@ -20,6 +20,7 @@ from renamr.core.journal import FaultInjector, ItemState
 from renamr.core.lock import WriterLock
 from renamr.core.operations import RunGuard, add_plan_item, apply_run, create_run, run_items
 from renamr.core.paths import is_within
+from renamr.core.runitem import RunItem
 
 
 class UndoOutcome(BaseModel):
@@ -122,13 +123,11 @@ def undo_run(
     return outcome
 
 
-def _plan_undo_item(db: Database, undo_id: str, item: object) -> None:
+def _plan_undo_item(db: Database, undo_id: str, item: RunItem) -> None:
     """Plan the reverse of one committed rename with its observed identity."""
-    from renamr.core.operations import RunItem
-
-    assert isinstance(item, RunItem)
     target = item.target_path
-    assert target is not None
+    if target is None:
+        raise UndoError("committed item has no target path")
     observed = hashing.fingerprint(target)
     add_plan_item(
         db,

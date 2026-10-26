@@ -19,8 +19,10 @@ def _core_files() -> list[Path]:
     return sorted(Path(core.__file__).parent.glob("*.py"))
 
 
-def test_core_import_does_not_load_litellm() -> None:
-    script = "import sys, renamr.core; print('litellm' in sys.modules)"
+def test_core_import_does_not_load_a_cloud_client() -> None:
+    script = (
+        "import sys, renamr.core; print(any(name in sys.modules for name in ('litellm', 'openai')))"
+    )
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, check=True
     )
