@@ -96,6 +96,35 @@ def _scan(workspace: Workspace, root_id: str, extractor: FeatureExtractor | None
     workflow.scan(workspace, root_id)
 
 
+def test_main_flow_trusted_examples_to_tested_active_rule(tmp_path: Path) -> None:
+    workspace, inbox_root, library_root, _ = _roots(tmp_path)
+    existing = tmp_path / "Library" / "Invoices" / "invoice.txt"
+    existing.parent.mkdir()
+    existing.write_text("Rechnung von Beispiel")
+    _scan(workspace, library_root.root_id, FakeExtractor(document_type="invoice"))
+    workflow.update_root(workspace, library_root.root_id, trusted_examples=True)
+    onboarding.seed_trusted_examples(workspace.db, root_ids=[library_root.root_id])
+    candidate = learning.propose_candidates(workspace.db)[0]
+    draft = workflow.create_rule_from_candidate(workspace, candidate)
+    assert draft.status is rules.RuleStatus.DRAFT
+    workflow.mark_tested(workspace, draft.rule_id)
+    active = workflow.activate_rule(workspace, draft.rule_id)
+    assert active.status is rules.RuleStatus.ACTIVE
+
+    incoming = tmp_path / "Inbox" / "new.txt"
+    incoming.write_text("Rechnung von Beispiel")
+    _scan(workspace, inbox_root.root_id, FakeExtractor(document_type="invoice"))
+    run_id = mutation.preview_routing(workspace, inbox_root.root_id)
+    assert len(mutation.run_items(workspace, run_id)) == 1
+    mutation.apply(workspace, run_id)
+
+    assert not incoming.exists()
+    moved = list((tmp_path / "Library" / "Invoices").iterdir())
+    assert [item.name for item in moved if item.name != "invoice.txt"]
+    renamed = next(item for item in moved if item.name != "invoice.txt")
+    assert renamed.read_text() == "Rechnung von Beispiel"
+
+
 def test_untrusted_scope_does_not_seed_placement_examples(tmp_path: Path) -> None:
     workspace, inbox_root, library_root, _ = _roots(tmp_path)
     target = tmp_path / "Library" / "Invoices" / "invoice.txt"

@@ -94,12 +94,18 @@ def review_command(
             yes=yes,
         )
         return
+    _finish_questions(workspace, as_json=as_json, yes=yes)
+
+
+def _finish_questions(workspace: Workspace, *, as_json: bool, yes: bool) -> None:
+    """Print pending questions noninteractively or ask them in sequence."""
     questions = review.review_questions(workspace.db)
     if as_json or not sys.stdin.isatty():
         typer.echo(json.dumps([item.model_dump(mode="json") for item in questions], indent=2))
         if not as_json:
             typer.echo(
-                "Noninteractive: use --review-id with --label/--accept/--template/--dismiss."
+                "Noninteractive: use --review-id with --label/--accept/--template/"
+                "--destination-root/--dismiss."
             )
         return
     if not questions:
@@ -150,6 +156,40 @@ def _resolve_one(
             "choose exactly one of --label, --negative, --template, --accept/--reject, "
             "--destination-root, --dismiss"
         )
+    if destination_root is not None:
+        _resolve_destination(
+            workspace,
+            review_id,
+            target_root_id=destination_root,
+            target_folder=destination_folder,
+            name=destination_name,
+            yes=yes,
+        )
+        return
+    _resolve_non_destination(
+        workspace,
+        review_id,
+        label=label,
+        template=template,
+        accept=accept,
+        dismiss=dismiss,
+        negative=negative,
+        notes=notes,
+    )
+
+
+def _resolve_non_destination(
+    workspace: Workspace,
+    review_id: str,
+    *,
+    label: list[str],
+    template: str | None,
+    accept: bool | None,
+    dismiss: bool,
+    negative: bool,
+    notes: str,
+) -> None:
+    """Resolve a non-destination review action from explicit flags."""
     if negative:
         fields = _fields(label)
         example = workflow.resolve_negative(workspace, review_id, fields=fields)
@@ -169,15 +209,6 @@ def _resolve_one(
             typer.echo("Rejected the move candidate; no example was created.")
         else:
             typer.echo(f"Confirmed manual-move example {example.example_id}.")
-    elif destination_root is not None:
-        _resolve_destination(
-            workspace,
-            review_id,
-            target_root_id=destination_root,
-            target_folder=destination_folder,
-            name=destination_name,
-            yes=yes,
-        )
     else:
         workflow.dismiss_review(workspace, review_id, note=notes)
         typer.echo("Review item dismissed without creating an example.")

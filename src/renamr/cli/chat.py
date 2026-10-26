@@ -52,14 +52,7 @@ def chat_command(
         _list_or_show(workspace, show)
         return
     if apply_proposal is not None:
-        proposal = dialog.get_proposal(workspace.db, apply_proposal)
-        for line in dialog_render.describe_proposal(workspace.db, proposal):
-            typer.echo(line)
-        confirmed = confirm(
-            f"Apply proposal {apply_proposal}?", yes=yes, input_text="yes" if yes else None
-        )
-        outcome = workflow.apply_dialog(workspace, apply_proposal, confirm=confirmed)
-        typer.echo(json.dumps(outcome, indent=2, default=str))
+        _apply_existing(workspace, apply_proposal, yes=yes)
         return
     settings = workspace.settings()
     root_ids = root or [item.root_id for item in workflow.list_roots(workspace)][:5]
@@ -74,6 +67,18 @@ def chat_command(
             _turn(workspace, message, inference, root_ids, apply=apply, yes=yes, history=[])
             return
         _loop(workspace, inference, root_ids, apply=apply, yes=yes)
+
+
+def _apply_existing(workspace: Workspace, proposal_id: str, *, yes: bool) -> None:
+    """Render and apply one already persisted proposal after confirmation."""
+    proposal = dialog.get_proposal(workspace.db, proposal_id)
+    for line in dialog_render.describe_proposal(workspace.db, proposal):
+        typer.echo(line)
+    confirmed = confirm(
+        f"Apply proposal {proposal_id}?", yes=yes, input_text="yes" if yes else None
+    )
+    outcome = workflow.apply_dialog(workspace, proposal_id, confirm=confirmed)
+    typer.echo(json.dumps(outcome, indent=2, default=str))
 
 
 def _loop(

@@ -90,12 +90,18 @@ def onboard_command(
         return
     _catalog(workspace, registered, ask=not no_questions, features=features)
     seeded = workflow.seed_trusted_examples(workspace, [root.root_id for root in registered])
-    if seeded.examples:
-        typer.echo(
-            f"seeded {seeded.examples} conservative placement example(s) from "
-            f"{seeded.roots} trusted scope(s); no rule was activated"
-        )
+    _report_seed(seeded)
     typer.echo("Onboarding catalogued selected scopes; no document was modified.")
+
+
+def _report_seed(seeded: onboarding.TrustedSeedResult) -> None:
+    """Print the trusted placement seed result when anything was seeded."""
+    if not seeded.examples:
+        return
+    typer.echo(
+        f"seeded {seeded.examples} conservative placement example(s) from "
+        f"{seeded.roots} trusted scope(s); no rule was activated"
+    )
 
 
 def _register(workspace: Workspace, specs: list[onboarding.OnboardSpec]) -> list[Root]:
