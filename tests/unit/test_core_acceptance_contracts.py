@@ -13,6 +13,7 @@ from renamr.core import (
     workflow,
 )
 from renamr.core.mcp_gateway import MCP_FIELDS
+from renamr.core.workspace import Workspace
 from tests.unit.acceptance_support import _roots, _scan
 
 
@@ -76,42 +77,30 @@ def test_manual_entity_label_survives_contract_bridge(tmp_path: Path) -> None:
     assert contract.contract_id
 
 
+def _add_destination_example(
+    workspace: Workspace, target: Path, scope_root_id: str, document_type: str = "invoice"
+) -> None:
+    examples.add_example(
+        workspace.db,
+        source=examples.ExampleSource.USER_DESTINATION,
+        revision_id=None,
+        location_id=None,
+        payload={
+            "document_type": document_type,
+            "new_path": str(target),
+            "scope_root_id": scope_root_id,
+        },
+    )
+
+
 def test_learning_counts_different_destinations_and_scopes_as_conflicts(tmp_path: Path) -> None:
     workspace, inbox_root, library_root, archive_root = _roots(tmp_path)
     target = tmp_path / "Archive" / "Invoices" / "x.txt"
-    examples.add_example(
-        workspace.db,
-        source=examples.ExampleSource.USER_DESTINATION,
-        revision_id=None,
-        location_id=None,
-        payload={
-            "document_type": "invoice",
-            "new_path": str(target),
-            "scope_root_id": inbox_root.root_id,
-        },
+    _add_destination_example(workspace, target, inbox_root.root_id)
+    _add_destination_example(
+        workspace, tmp_path / "Archive" / "Receipts" / "x.txt", inbox_root.root_id
     )
-    examples.add_example(
-        workspace.db,
-        source=examples.ExampleSource.USER_DESTINATION,
-        revision_id=None,
-        location_id=None,
-        payload={
-            "document_type": "invoice",
-            "new_path": str(tmp_path / "Archive" / "Receipts" / "x.txt"),
-            "scope_root_id": inbox_root.root_id,
-        },
-    )
-    examples.add_example(
-        workspace.db,
-        source=examples.ExampleSource.USER_DESTINATION,
-        revision_id=None,
-        location_id=None,
-        payload={
-            "document_type": "invoice",
-            "new_path": str(target),
-            "scope_root_id": library_root.root_id,
-        },
-    )
+    _add_destination_example(workspace, target, library_root.root_id)
     examples.add_example(
         workspace.db,
         source=examples.ExampleSource.NEGATIVE,
@@ -350,3 +339,38 @@ def test_confirmed_manual_folder_move_keeps_contract_id(tmp_path: Path) -> None:
     assert current.contract_id == contract.contract_id
     assert current.members[0].root_id == archive_root.root_id
     assert current.members[0].relative_path == "A"
+
+
+def test_unlabeled_or_longer_reference_does_not_bridge(tmp_path: Path) -> None:
+    workspace, inbox_root, library_root, _ = _roots(tmp_path)
+    contract_doc = tmp_path / "Library" / "contracts" / "a" / "initial.txt"
+    contract_doc.parent.mkdir(parents=True)
+    contract_doc.write_text("Vertragsnummer: V-2026-001\nAnbieter: Beispiel AG\n")
+    _scan(workspace, library_root.root_id)
+    workflow.configure_contracts(
+        workspace, library_root.root_id, confirmed=True, base_path="contracts"
+    )
+    workflow.refresh_contracts(workspace)
+    candidates = {
+        "unlabeled.txt": "Reference V-2026-001 appears without a label.\n",
+        "longer.txt": "Vertragsnummer: V-2026-0012\n",
+        "embedded.txt": "Kundennummer: XX V-2026-001 YY\n",
+    }
+    for name, text in candidates.items():
+        (tmp_path / "Inbox" / name).write_text(text)
+    _scan(workspace, inbox_root.root_id)
+    workflow.refresh_contracts(workspace)
+
+    for name in candidates:
+        location = catalog.get_location_by_path(workspace.db, tmp_path / "Inbox" / name)
+        assert location is not None
+        assert not any(
+            fact.field == "entity_id"
+            for fact in catalog.get_facts(workspace.db, location.revision_id)
+        )
+    member_location = catalog.get_location_by_path(workspace.db, contract_doc)
+    assert member_location is not None
+    assert any(
+        fact.field == "entity_id"
+        for fact in catalog.get_facts(workspace.db, member_location.revision_id)
+    )

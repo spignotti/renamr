@@ -30,12 +30,21 @@ install approval.
   seconds. Settings are database-owned (`service.max_documents`,
   `service.max_model_calls`, `service.max_pages`, `service.max_seconds`,
   `service.interval_s`).
+- Model-call and time budgets are passed into the feature chunk loop, so one
+  long document cannot make ten requests when one call remains. A deferral is
+  recorded as `feature_deferred` with a manual retry path; it is never marked
+  complete, permanently failed, or routable.
 - A changed file whose page count does not fit the remaining page budget is
   deferred with a `scan_budget_deferred` review item and manual retry path. It is
   never marked complete.
+- Deferred large files do not stop later roots in the same tick. The tick scans
+  every root while budget remains; repeated deferrals stay actionable and do not
+  starve other inboxes.
 - Feature work starts/reuses an eligible local server only when there is actual
-  work. Only an owned process is stopped. Role-specific keep-alive avoids
-  unnecessary resident models; requests are sequential.
+  work. Startup, verification, and feature work share one owned-process cleanup,
+  so a verification or extraction failure still stops only a server this app
+  started. Role-specific keep-alive avoids unnecessary resident models; requests
+  are sequential.
 - Classify possible manual moves conservatively. Own operations are not training
   examples.
 - Route only inbox roots with `automation_enabled` and active rules, through the

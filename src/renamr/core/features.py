@@ -9,6 +9,7 @@ chunks stay in review instead of silently keeping the first chunk.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 from typing import Protocol, cast, get_args
 
@@ -79,6 +80,8 @@ class FeatureRequest(BaseModel):
     page_texts: list[str]
     language: str | None = None
     filename: str | None = None
+    max_model_calls: int | None = None
+    deadline_monotonic: float | None = None
 
 
 class FeatureExtraction(BaseModel):
@@ -91,6 +94,7 @@ class FeatureExtraction(BaseModel):
     blocked_reason: str | None = None
     incomplete: bool = False
     chunks: int = 1
+    calls: int = 0
 
 
 class FeatureExtractor(Protocol):
@@ -185,48 +189,123 @@ class LocalFeatureExtractor:
         self._overhead = prompt_overhead
 
     def extract(self, request: FeatureRequest) -> FeatureExtraction:
-        """Extract, validate, and merge features across bounded chunks."""
+        """Extract, validate, and merge features across bounded chunks.
+
+        The request may cap model calls or set a monotonic deadline. Work stops
+        before the next chunk exceeds either bound; an incomplete chunk set never
+        yields routable features.
+        """
         page_texts = list(request.page_texts)
         if not any(text.strip() for text in page_texts):
             return _blocked("no_extractable_text", incomplete=True)
         chunks = chunk_pages(page_texts, self._max_chars, overhead=self._overhead)
-        results: list[FeatureExtraction] = [self._extract_chunk(chunk) for chunk in chunks]
-        valid = [item.features for item in results if item.features is not None]
-        blocked = next((item.blocked_reason for item in results if item.blocked_reason), None)
-        if not valid:
-            return _blocked(blocked or "extraction_blocked", incomplete=True, chunks=len(chunks))
-        merged = _merge_sets([item for item in valid if item is not None])
-        if merged is None:
-            return _blocked("conflicting_chunks", incomplete=True, chunks=len(chunks))
-        validation = validate_features(merged, page_texts)
-        if not validation.ok or validation.unsafe:
-            reason = validation.reasons[0] if validation.reasons else "invalid_features"
-            return FeatureExtraction(
-                validation=validation, blocked_reason=reason, incomplete=True, chunks=len(chunks)
+        if request.max_model_calls is not None and request.max_model_calls <= 0:
+            return _blocked(
+                "feature_budget_exhausted", incomplete=True, chunks=len(chunks), calls=0
             )
-        partial = blocked is not None
-        return FeatureExtraction(
-            features=merged, validation=validation, incomplete=partial, chunks=len(chunks)
+        results, calls, budget_reason = _run_chunks(
+            self._inference,
+            self._model,
+            self._output_mode,
+            chunks,
+            request,
         )
+        if budget_reason is not None:
+            return _blocked(budget_reason, incomplete=True, chunks=len(chunks), calls=calls)
+        return _interpret_chunks(page_texts, chunks, results, calls)
 
-    def _extract_chunk(self, chunk: PageChunk) -> FeatureExtraction:
-        """Run one bounded chunk through the local model and validate it."""
-        messages = [
-            ChatMessage(role="system", content=FEATURE_SYSTEM_PROMPT),
-            ChatMessage(role="user", content=build_chunk_text(chunk)),
-        ]
-        try:
-            result = self._inference.complete(
-                self._model, messages, DocumentFeatures, output_mode=self._output_mode
-            )
-        except Exception as exc:
-            reason = getattr(exc, "category", "inference_failed")
-            return _blocked(f"inference_{reason}", incomplete=True)
-        validation = validate_features(result.data, _page_text_map(chunk))
-        if not validation.ok or validation.unsafe:
-            reason = validation.reasons[0] if validation.reasons else "invalid_features"
-            return FeatureExtraction(validation=validation, blocked_reason=reason, incomplete=True)
-        return FeatureExtraction(features=result.data, validation=validation)
+
+def _run_chunks(
+    inference: FeatureCompleter,
+    model: str,
+    output_mode: OutputMode | None,
+    chunks: list[PageChunk],
+    request: FeatureRequest,
+) -> tuple[list[FeatureExtraction], int, str | None]:
+    """Run chunks within the request's model-call and time budgets."""
+    results: list[FeatureExtraction] = []
+    calls = 0
+    for chunk in chunks:
+        if request.max_model_calls is not None and calls >= request.max_model_calls:
+            return results, calls, "feature_budget_exhausted"
+        if (
+            request.deadline_monotonic is not None
+            and time.monotonic() >= request.deadline_monotonic
+        ):
+            return results, calls, "feature_time_budget_exhausted"
+        results.append(_complete_chunk(inference, model, output_mode, chunk))
+        calls += 1
+    return results, calls, None
+
+
+def _interpret_chunks(
+    page_texts: list[str],
+    chunks: list[PageChunk],
+    results: list[FeatureExtraction],
+    calls: int,
+) -> FeatureExtraction:
+    """Validate chunk results and reject any partial or conflicting success."""
+    valid = [item.features for item in results if item.features is not None]
+    blocked = next((item.blocked_reason for item in results if item.blocked_reason), None)
+    if not valid:
+        return _blocked(
+            blocked or "extraction_blocked", incomplete=True, chunks=len(chunks), calls=calls
+        )
+    if len(results) != len(chunks):
+        return _blocked("incomplete_chunks", incomplete=True, chunks=len(chunks), calls=calls)
+    merged = _merge_sets([item for item in valid if item is not None])
+    if merged is None:
+        return _blocked("conflicting_chunks", incomplete=True, chunks=len(chunks), calls=calls)
+    validation = validate_features(merged, page_texts)
+    if not validation.ok or validation.unsafe:
+        reason = validation.reasons[0] if validation.reasons else "invalid_features"
+        return FeatureExtraction(
+            validation=validation,
+            blocked_reason=reason,
+            incomplete=True,
+            chunks=len(chunks),
+            calls=calls,
+        )
+    partial = blocked is not None or any(item.incomplete for item in results)
+    if partial:
+        reason = blocked or "incomplete_chunks"
+        return FeatureExtraction(
+            validation=FeatureValidation(ok=False, reasons=[reason]),
+            blocked_reason=reason,
+            incomplete=True,
+            chunks=len(chunks),
+            calls=calls,
+        )
+    return FeatureExtraction(
+        features=merged,
+        validation=validation,
+        incomplete=False,
+        chunks=len(chunks),
+        calls=calls,
+    )
+
+
+def _complete_chunk(
+    inference: FeatureCompleter,
+    model: str,
+    output_mode: OutputMode | None,
+    chunk: PageChunk,
+) -> FeatureExtraction:
+    """Run one bounded chunk through the local model and validate it."""
+    messages = [
+        ChatMessage(role="system", content=FEATURE_SYSTEM_PROMPT),
+        ChatMessage(role="user", content=build_chunk_text(chunk)),
+    ]
+    try:
+        result = inference.complete(model, messages, DocumentFeatures, output_mode=output_mode)
+    except Exception as exc:
+        reason = getattr(exc, "category", "inference_failed")
+        return _blocked(f"inference_{reason}", incomplete=True)
+    validation = validate_features(result.data, _page_text_map(chunk))
+    if not validation.ok or validation.unsafe:
+        reason = validation.reasons[0] if validation.reasons else "invalid_features"
+        return FeatureExtraction(validation=validation, blocked_reason=reason, incomplete=True)
+    return FeatureExtraction(features=result.data, validation=validation)
 
 
 def _page_text_map(chunk: PageChunk) -> list[str]:
@@ -256,13 +335,16 @@ def _merge_sets(sets: list[DocumentFeatures]) -> DocumentFeatures | None:
     return DocumentFeatures.model_validate(merged)
 
 
-def _blocked(reason: str, *, incomplete: bool, chunks: int = 1) -> FeatureExtraction:
+def _blocked(
+    reason: str, *, incomplete: bool, chunks: int = 1, calls: int = 0
+) -> FeatureExtraction:
     """Return an explicit blocked extraction."""
     return FeatureExtraction(
         validation=FeatureValidation(ok=False, reasons=[reason]),
         blocked_reason=reason,
         incomplete=incomplete,
         chunks=chunks,
+        calls=calls,
     )
 
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,7 +17,11 @@ from pydantic import BaseModel, ConfigDict
 
 from renamr.core import catalog, folders, roots
 from renamr.core.catalog import QualityState
-from renamr.core.contract_fields import ContractDocumentFacts, reference_key
+from renamr.core.contract_fields import (
+    ContractDocumentFacts,
+    extract_references,
+    reference_key,
+)
 from renamr.core.contract_types import ContractReference
 from renamr.core.db import Database
 from renamr.core.errors import CoreError
@@ -210,32 +213,26 @@ def _document_candidates(
     unique: dict[str, str],
     pages: list[catalog.PageRecord],
 ) -> set[str]:
-    """Return contracts supported by membership and unique grounded references."""
+    """Return contracts supported by membership and exact labeled references."""
     candidates = set(_membership_contracts(db, location, memberships))
-    if pages:
-        text = reference_key(" ".join(page.text for page in pages))
-        candidates.update(
-            contract_id
-            for key, contract_id in unique.items()
-            if key and _contains_reference(text, key)
-        )
+    for key in _labeled_reference_keys(pages):
+        contract_id = unique.get(key)
+        if contract_id is not None:
+            candidates.add(contract_id)
     return candidates
 
 
 def _entity_state(pages: list[catalog.PageRecord], unique: dict[str, str]) -> str:
-    """Return whether a reference match (or only membership) supplied identity."""
-    if not pages:
-        return "contract_membership"
-    text = reference_key(" ".join(page.text for page in pages))
-    if any(key and _contains_reference(text, key) for key in unique):
+    """Return whether an exact labeled reference (or only membership) matched."""
+    if any(key in unique for key in _labeled_reference_keys(pages)):
         return "contract_reference"
     return "contract_membership"
 
 
-def _contains_reference(text: str, key: str) -> bool:
-    """Return whether a normalized key occurs as a bounded token."""
-    pattern = rf"(?<![A-Za-z0-9]){re.escape(key)}(?![A-Za-z0-9])"
-    return re.search(pattern, text) is not None
+def _labeled_reference_keys(pages: list[catalog.PageRecord]) -> set[str]:
+    """Return exact labeled reference keys found in stored page text."""
+    references = extract_references([(page.page_number, page.text) for page in pages])
+    return {reference_key(item.value) for item in references if item.value}
 
 
 def reconcile_members(db: Database) -> int:

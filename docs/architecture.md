@@ -59,6 +59,12 @@ with method, rotation, confidence, quality, and incompleteness.
   stale label or structure proposal fails. Pending routes re-run deterministic
   rule selection at mutation time, so a new higher-priority rule or changed facts
   invalidate the plan.
+- Feature chunk work receives the remaining model-call and time budget. Partial
+  or incomplete feature results never become facts or routing input; they stay
+  unresolved with an actionable review. Budget deferrals are not failures and do
+  not stop later roots in the same tick.
+- An owned local server is stopped after verification failure, extraction
+  failure, and normal exit; a reused external server is never stopped.
 - Contract groups accept a validated root-relative base path. Stable contract ids
   follow member folders/files through approved structure plans and confirmed
   manual moves. Grounded private references attach `entity_id` only when they

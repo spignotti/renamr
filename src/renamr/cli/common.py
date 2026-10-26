@@ -161,6 +161,8 @@ def needs_feature_work(workspace: Workspace, root_ids: list[str], settings: Sett
             revision = catalog.get_revision(workspace.db, location.revision_id)
             if revision.quality_state not in (catalog.QualityState.OK, catalog.QualityState.LOW):
                 continue
+            if revision.failed_stage == "features_deferred":
+                return True
             if revision.failed_stage == "features" or revision.next_retry_at:
                 continue
             if not revision.feature_key.startswith(prefix):
@@ -180,6 +182,7 @@ def catalog_then_features(
         workflow.scan(workspace, root_id)
     if not needs_feature_work(workspace, root_ids, settings):
         return False
+    workflow.retry_deferred_features(workspace, root_ids)
     with inference_session(settings, role=role) as inference:
         verify_and_key(workspace, settings, inference, role=role)
         workspace.extractor = feature_extractor(settings, inference, role=role)

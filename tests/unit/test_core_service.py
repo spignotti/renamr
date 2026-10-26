@@ -5,14 +5,19 @@ from __future__ import annotations
 import plistlib
 import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import ClassVar
 
-from renamr.benchmark_schema import RulePredicate
+from renamr.benchmark_schema import DocumentFeatures, RulePredicate
 from renamr.core import catalog, processing, reconcile, scheduler, workflow
+from renamr.core.errors import InferenceError
 from renamr.core.extract_runner import InProcessRunner
+from renamr.core.features import LocalFeatureExtractor
 from renamr.core.roots import Root, RootRole
-from renamr.core.settings import Settings
+from renamr.core.settings import ServiceBudgets, Settings
 from renamr.core.workspace import Workspace
+from renamr.local_transport import StructuredResult
 from tests.unit.core_support import FakeExtractor, make_text_pdf
 
 
@@ -57,7 +62,7 @@ def _settle_features(workspace: Workspace) -> None:
     """Mark facts current for the configured model so a tick needs no server."""
     settings = workspace.settings()
     prefix = (
-        f"{settings.model_roles.main}|{settings.output_mode}|{processing.FEATURE_PROMPT_VERSION}|"
+        f"{settings.model_roles.small}|{settings.output_mode}|{processing.FEATURE_PROMPT_VERSION}|"
     )
     for root in workflow.list_roots(workspace):
         for location in catalog.locations_for_root(workspace.db, root.root_id):
@@ -200,3 +205,188 @@ def test_launch_agent_install_status_remove_temp_home(tmp_path: Path) -> None:
     assert scheduler.remove_agent(home=home, launcher=launcher) is True
     assert not plist.exists()
     assert foreign.exists()
+
+
+class _CountingCompleter:
+    """Offline completer that counts calls and always fails."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete(self, *args: object, **kwargs: object) -> StructuredResult[DocumentFeatures]:
+        self.calls += 1
+        raise InferenceError("synthetic_unavailable")
+
+
+def test_feature_chunk_budget_is_enforced_within_one_document(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    root, inbox = _inbox(workspace, tmp_path)
+    workspace.save_settings(Settings(stability_window_s=0))
+    (inbox / "long.txt").write_text("Synthetic invoice data. " * 50)
+    workspace.runner = InProcessRunner()
+    completer = _CountingCompleter()
+    workspace.extractor = LocalFeatureExtractor(
+        completer, "synthetic", max_chars=200, prompt_overhead=50
+    )
+
+    outcome = workflow.scan(
+        workspace,
+        root.root_id,
+        budget=reconcile.ScanBudget(max_model_calls=1, max_pages=50),
+    )
+
+    assert completer.calls == 1
+    assert outcome.model_calls == 1
+    assert outcome.deferred == 1
+    location = catalog.locations_for_root(workspace.db, root.root_id)[0]
+    revision = catalog.get_revision(workspace.db, location.revision_id)
+    assert revision.failed_stage == "features_deferred"
+    assert any(item["kind"] == "feature_deferred" for item in workflow.review_items(workspace))
+
+    workspace.extractor = FakeExtractor(document_type="invoice", evidence=False)
+    workflow.retry_deferred_features(workspace, [root.root_id])
+    workflow.scan(workspace, root.root_id)
+
+    facts = {
+        fact.field: fact.value for fact in catalog.get_facts(workspace.db, revision.revision_id)
+    }
+    assert facts["document_type"] == "invoice"
+    assert not any(item["kind"] == "feature_deferred" for item in workflow.review_items(workspace))
+
+
+def test_deferred_first_root_does_not_starve_second_root(tmp_path: Path, monkeypatch) -> None:
+    workspace = _workspace(tmp_path)
+    workspace.save_settings(
+        Settings(
+            stability_window_s=0,
+            service=ServiceBudgets(max_documents=4, max_model_calls=4, max_pages=1),
+        )
+    )
+    first, second = tmp_path / "a-first", tmp_path / "b-second"
+    first.mkdir()
+    second.mkdir()
+    first_root = workflow.register_root(workspace, first, role=RootRole.INBOX)
+    second_root = workflow.register_root(workspace, second, role=RootRole.INBOX)
+    make_text_pdf(first / "large.pdf", ["one", "two", "three"])
+    (second / "small.txt").write_text("small")
+    workspace.runner = InProcessRunner()
+    monkeypatch.setattr(scheduler, "_feature_pass", lambda *args, **kwargs: 0)
+
+    for _ in range(3):
+        result = scheduler.run_tick(workspace)
+        assert result.roots_scanned == 2
+        assert result.deferred >= 1
+
+    assert catalog.get_location_by_path(workspace.db, second / "small.txt") is not None
+    assert catalog.get_location_by_path(workspace.db, first / "large.pdf") is None
+    assert any(item["kind"] == "scan_budget_deferred" for item in workflow.review_items(workspace))
+    assert first_root.root_id and second_root.root_id
+
+
+class _FakeServer:
+    """Fake owned server that records lifecycle events."""
+
+    instances: ClassVar[list[_FakeServer]] = []
+
+    def __init__(self, *, started_by_us: bool = True, **kwargs: object) -> None:
+        self.events: list[str] = []
+        self.started_by_us = started_by_us
+        _FakeServer.instances.append(self)
+
+    def start_if_needed(self) -> bool:
+        self.events.append("start")
+        return self.started_by_us
+
+    def stop(self) -> None:
+        self.events.append("stop")
+
+
+def _run_feature_pass(workspace: Workspace) -> scheduler.TickResult:
+    tick = scheduler.TickResult(status="completed")
+    used = scheduler._feature_pass(
+        workspace,
+        workspace.settings(),
+        tick,
+        0,
+        time.monotonic(),
+    )
+    assert isinstance(used, int)
+    return tick
+
+
+def test_feature_pass_stops_owned_server_on_verification_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace = _workspace(tmp_path)
+    _FakeServer.instances.clear()
+    monkeypatch.setattr(scheduler, "OwnedServer", _FakeServer)
+    monkeypatch.setattr(scheduler.LocalInference, "from_settings", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        scheduler,
+        "verify_model",
+        lambda *args, **kwargs: (_ for _ in ()).throw(InferenceError("synthetic")),
+    )
+
+    result = _run_feature_pass(workspace)
+
+    assert result.error == "inference_unavailable"
+    assert _FakeServer.instances[-1].events == ["start", "stop"]
+
+
+def test_feature_pass_stops_owned_server_on_extraction_failure(tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    workspace = _workspace(tmp_path)
+    _FakeServer.instances.clear()
+    monkeypatch.setattr(scheduler, "OwnedServer", _FakeServer)
+    monkeypatch.setattr(scheduler.LocalInference, "from_settings", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        scheduler, "verify_model", lambda *args, **kwargs: SimpleNamespace(digest="d")
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "_run_feature_roots",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("synthetic")),
+    )
+
+    result = _run_feature_pass(workspace)
+
+    assert result.error == "inference_unavailable"
+    assert _FakeServer.instances[-1].events == ["start", "stop"]
+
+
+def test_feature_pass_stops_owned_server_after_normal_exit(tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    workspace = _workspace(tmp_path)
+    _FakeServer.instances.clear()
+    monkeypatch.setattr(scheduler, "OwnedServer", _FakeServer)
+    monkeypatch.setattr(scheduler.LocalInference, "from_settings", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        scheduler, "verify_model", lambda *args, **kwargs: SimpleNamespace(digest="d")
+    )
+    monkeypatch.setattr(scheduler, "_run_feature_roots", lambda *args, **kwargs: 0)
+
+    _run_feature_pass(workspace)
+
+    assert _FakeServer.instances[-1].events == ["start", "stop"]
+
+
+def test_feature_pass_does_not_stop_external_server(tmp_path: Path, monkeypatch) -> None:
+    workspace = _workspace(tmp_path)
+    _FakeServer.instances.clear()
+    monkeypatch.setattr(scheduler.LocalInference, "from_settings", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        scheduler,
+        "verify_model",
+        lambda *args, **kwargs: (_ for _ in ()).throw(InferenceError("synthetic")),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "OwnedServer",
+        lambda **kwargs: _FakeServer(started_by_us=False, **kwargs),
+    )
+
+    _run_feature_pass(workspace)
+
+    assert _FakeServer.instances[-1].events == ["start"]

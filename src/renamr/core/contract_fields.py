@@ -88,7 +88,15 @@ _REFERENCE_LABELS = (
     "kundennummer",
     "customer number",
 )
-_AMOUNT = re.compile(r"(\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|\d+(?:\.\d{2})?)\s*(EUR|GBP|USD|CHF)")
+_AMOUNT = re.compile(
+    r"(?<![\d.,])(?P<amount>"
+    r"\d{1,3}(?:[.\s]\d{3})+(?:,\d{1,2})?"
+    r"|\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?"
+    r"|\d+,\d{1,2}"
+    r"|\d+\.\d{1,2}"
+    r"|\d+"
+    r")(?![\d])\s*(?P<currency>EUR|GBP|USD|CHF)\b"
+)
 _DURATION = re.compile(r"(\d+)\s*(monat|monate|months?|jahr|jahre|years?)")
 _DEADLINE = re.compile(r"(\d+)\s*(tag|tage|days?|woche|wochen|weeks?)")
 _REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9./_-]{2,39}")
@@ -142,7 +150,7 @@ def parse_contract_document(
     references: list[ExtractedReference] = []
     if complete:
         fields.extend(_explicit_fields(pages))
-        references = _explicit_references(pages)
+        references = extract_references(pages)
         _add_contract_type(fields, kind, pages)
         _add_calculated(fields)
     issue = _labeled_date(pages, _ISSUE_LABELS)
@@ -219,8 +227,8 @@ def _add_contract_type(
     )
 
 
-def _explicit_references(pages: list[tuple[int, str]]) -> list[ExtractedReference]:
-    """Return unique labeled reference numbers grounded in the chain text."""
+def extract_references(pages: list[tuple[int, str]]) -> list[ExtractedReference]:
+    """Return unique labeled reference numbers grounded in the page text."""
     found: dict[str, ExtractedReference] = {}
     for page, text in pages:
         for line in text.splitlines():
@@ -230,7 +238,7 @@ def _explicit_references(pages: list[tuple[int, str]]) -> list[ExtractedReferenc
                 index = lowered.find(label)
                 if index < 0:
                     continue
-                match = _REFERENCE.search(stripped[index + len(label) :].lstrip(" :=—-"))
+                match = _REFERENCE.match(stripped[index + len(label) :].lstrip(" :=—-"))
                 if match is None:
                     continue
                 value = match.group(0).rstrip(".,;")
@@ -311,7 +319,8 @@ def _labeled_deadline(
     match = _DEADLINE.search(found[1].lower())
     if match is None:
         return None
-    days = int(match.group(1)) * (7 if match.group(2).startswith("wo") else 1)
+    unit = match.group(2)
+    days = int(match.group(1)) * (7 if unit.startswith(("wo", "week")) else 1)
     return ExtractedField(field=field, value=str(days), page=found[0], quote=found[1][:300])
 
 
@@ -342,8 +351,10 @@ def _costs(pages: list[tuple[int, str]]) -> list[ExtractedField]:
             match = _AMOUNT.search(line)
             if match is None:
                 continue
-            amount = _normalize_amount(match.group(1))
-            currency = match.group(2).upper()
+            amount = _normalize_amount(match.group("amount"))
+            if amount is None:
+                continue
+            currency = match.group("currency").upper()
             fields = [
                 ExtractedField(field="cost_amount", value=amount, page=page, quote=line[:300]),
                 ExtractedField(field="cost_currency", value=currency, page=page, quote=line[:300]),
@@ -404,11 +415,40 @@ def _first_line(pages: list[tuple[int, str]], labels: tuple[str, ...]) -> tuple[
     return None
 
 
-def _normalize_amount(value: str) -> str:
-    """Normalize a German or plain decimal amount to a dot decimal string."""
-    if "," in value:
-        return value.replace(".", "").replace(" ", "").replace(",", ".")
-    return value.replace(" ", "")
+def _normalize_amount(value: str) -> str | None:
+    """Normalize an unambiguous monetary token to a two-decimal string.
+
+    Returns None for ambiguous single-separator forms such as ``1.200`` or
+    ``1,200`` where German grouping and English decimals cannot be distinguished.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    text = value.strip().replace(" ", "")
+    if not text:
+        return None
+    last_dot = text.rfind(".")
+    last_comma = text.rfind(",")
+    if last_dot >= 0 and last_comma >= 0:
+        if last_dot > last_comma:
+            cleaned = text.replace(",", "")
+        else:
+            cleaned = text.replace(".", "").replace(",", ".")
+    elif last_comma >= 0:
+        digits = len(text) - last_comma - 1
+        if digits not in (1, 2):
+            return None
+        cleaned = text.replace(",", ".")
+    elif last_dot >= 0:
+        digits = len(text) - last_dot - 1
+        if digits not in (1, 2):
+            return None
+        cleaned = text
+    else:
+        cleaned = text
+    try:
+        return f"{Decimal(cleaned):.2f}"
+    except InvalidOperation:
+        return None
 
 
 def _interval(lowered: str) -> str | None:

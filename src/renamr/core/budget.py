@@ -56,6 +56,18 @@ class BudgetTracker:
             return None
         return max(0, self.budget.max_pages - self.pages)
 
+    def model_room(self) -> int | None:
+        """Return remaining model-call budget, or None when unlimited."""
+        if self.budget.max_model_calls is None:
+            return None
+        return max(0, self.budget.max_model_calls - self.model_calls)
+
+    def deadline(self) -> float | None:
+        """Return the monotonic deadline for this scan, or None when unlimited."""
+        if self.budget.max_seconds is None:
+            return None
+        return self.started + self.budget.max_seconds
+
     def record(self, outcome: ScanOutcome, before: tuple[int, int]) -> None:
         """Record one processed document's page/model cost."""
         self.documents += 1

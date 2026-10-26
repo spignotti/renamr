@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from renamr.core import roots
+from renamr.core import onboarding, roots
 from renamr.core.db import Database
 from renamr.core.errors import ConfigError, LegacyRejectedError, PathBoundaryError, RootError
 from renamr.core.migration import (
@@ -186,3 +186,38 @@ def test_legacy_migration_blocks_cloud_and_compression(tmp_path: Path) -> None:
     assert "compression_rejected" in codes
     with pytest.raises(LegacyRejectedError):
         apply_legacy_migration(db, preview, state_dir=tmp_path / "state")
+
+
+def test_wire_selected_inboxes_preserves_existing_and_adds_only_selected(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    state = tmp_path / "state"
+    for name in ("inbox-a", "inbox-b", "library-a", "library-b"):
+        (tmp_path / name).mkdir()
+    inbox_a = roots.register_root(
+        db, path=tmp_path / "inbox-a", role=RootRole.INBOX, state_dir=state
+    )
+    inbox_b = roots.register_root(
+        db, path=tmp_path / "inbox-b", role=RootRole.INBOX, state_dir=state
+    )
+    library_a = roots.register_root(
+        db, path=tmp_path / "library-a", role=RootRole.LIBRARY, state_dir=state
+    )
+    library_b = roots.register_root(
+        db, path=tmp_path / "library-b", role=RootRole.LIBRARY, state_dir=state
+    )
+    roots.set_allowed_targets(db, inbox_a.root_id, [library_a.root_id])
+
+    onboarding.wire_selected_inboxes(db, [inbox_a.root_id, library_b.root_id])
+    assert set(roots.get_root(db, inbox_a.root_id).allowed_target_ids) == {
+        library_a.root_id,
+        library_b.root_id,
+    }
+
+    onboarding.wire_selected_inboxes(db, [inbox_a.root_id])
+    assert set(roots.get_root(db, inbox_a.root_id).allowed_target_ids) == {
+        library_a.root_id,
+        library_b.root_id,
+    }
+    assert roots.get_root(db, inbox_b.root_id).allowed_target_ids == []

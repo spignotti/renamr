@@ -146,8 +146,11 @@ Contract groups can use a validated root-relative base path (for example
 `Personal/Contracts`) so nested PARA layouts work. Contract ids stay stable when
 an approved structure plan or a confirmed manual move relocates a member.
 Grounded private contract/reference numbers can attach a stable `entity_id` to a
-document only when they resolve to one contract; shared references remain
-ambiguous. Reference values never enter MCP exports or diagnostics.
+document only when a labeled reference exactly equals a value verified for one
+contract; unlabeled or longer tokens do not match. Shared references remain
+ambiguous. Reference values never enter MCP exports or diagnostics. Contract
+amounts and notice periods use complete labeled tokens; ambiguous grouped amounts
+and unsupported wording stay unknown.
 
 ## Contracts
 
@@ -223,6 +226,10 @@ See [docs/mcp.md](docs/mcp.md).
   where the destination filesystem supports them.
 - Unknown facts and incomplete/weak OCR stay in review; archive location or file
   timestamps never prove a contract ended.
+- Service ticks pass their remaining model-call and time budget into feature
+  chunks. A long document is deferred with an actionable review and manual retry
+  instead of exceeding the budget or starving later roots; partial feature
+  results never route.
 - Text export writes complete stored OCR/text to an explicit `0600` destination.
   It refuses an existing destination unless `--overwrite --yes` is given after
   confirmation, and it never rewrites a registered source original.

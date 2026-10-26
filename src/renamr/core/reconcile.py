@@ -19,13 +19,14 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from renamr.core import catalog, processing
+from renamr.core import catalog, feature_stage, processing
 from renamr.core.budget import BudgetTracker, ScanBudget
-from renamr.core.catalog import PageRecord, Presence, QualityState
+from renamr.core.catalog import Presence, QualityState
 from renamr.core.db import Database
 from renamr.core.extract import ExtractorLimits, detect_media_type, estimate_page_count
 from renamr.core.extract_runner import ExtractionResult, ExtractionRunner, SubprocessRunner
-from renamr.core.features import FeatureExtractor, FeatureRequest, features_to_facts
+from renamr.core.facts import record_review_once
+from renamr.core.features import FeatureExtractor
 from renamr.core.hashing import exceeds_limit, fingerprint, stat_matches
 from renamr.core.paths import is_within
 from renamr.core.roots import Root, list_roots
@@ -142,7 +143,7 @@ def _scan_keys(
             _routine_model(settings),
             settings.output_mode,
             model_digest=model_digest,
-            budget_signature=str(settings.feature_max_chars),
+            budget_signature=feature_budget_signature(settings),
         )
     return _ScanKeys(extract=extract_key, feature=feature_key)
 
@@ -150,6 +151,11 @@ def _scan_keys(
 def _routine_model(settings: Settings) -> str:
     """Return the configured routine classification model (small role)."""
     return settings.model_roles.small
+
+
+def feature_budget_signature(settings: Settings) -> str:
+    """Return the cache signature for the model request character budget."""
+    return str(settings.feature_max_chars)
 
 
 def _scan_candidates(
@@ -183,7 +189,7 @@ def _scan_candidates(
         seen.add(str(path))
         before = (outcome.pages_extracted, outcome.model_calls)
         worked = _scan_candidate(
-            db, root, path, extraction, extractor, bounds, keys, outcome, new_hashes
+            db, root, path, extraction, extractor, bounds, keys, outcome, new_hashes, tracker
         )
         if tracker is not None and worked:
             tracker.record(outcome, before)
@@ -201,6 +207,7 @@ def _scan_candidate(
     keys: _ScanKeys,
     outcome: ScanOutcome,
     new_hashes: dict[str, list[str]],
+    tracker: BudgetTracker | None,
 ) -> bool:
     """Ingest one candidate (with a stat fast path) and process it.
 
@@ -236,7 +243,7 @@ def _scan_candidate(
     if stage is processing.Stage.SKIP:
         outcome.unchanged += 1
         return False
-    _process_stage(db, path, revision_id, stage, runner, extractor, limits, keys, outcome)
+    _process_stage(db, path, revision_id, stage, runner, extractor, limits, keys, outcome, tracker)
     return True
 
 
@@ -250,17 +257,22 @@ def _process_stage(
     limits: ExtractorLimits,
     keys: _ScanKeys,
     outcome: ScanOutcome,
+    tracker: BudgetTracker | None,
 ) -> None:
     """Run the extraction and/or feature stage for one revision."""
     if stage is processing.Stage.EXTRACT:
         result = runner.run(path, limits)
         _store_extraction(db, revision_id, result, keys.extract, outcome)
         if result.pages and keys.feature is not None:
-            _run_features(db, revision_id, result.pages, extractor, keys.feature, outcome)
+            feature_stage.run_features(
+                db, revision_id, result.pages, extractor, keys.feature, outcome, tracker
+            )
         return
     pages = catalog.get_pages(db, revision_id)
     if keys.feature is not None:
-        _run_features(db, revision_id, pages, extractor, keys.feature, outcome)
+        feature_stage.run_features(
+            db, revision_id, pages, extractor, keys.feature, outcome, tracker
+        )
 
 
 def _resolve_revision(
@@ -338,35 +350,6 @@ def _quality(result: ExtractionResult, outcome: ScanOutcome) -> str:
     return QualityState.OK.value
 
 
-def _run_features(
-    db: Database,
-    revision_id: str,
-    pages: list[PageRecord],
-    extractor: FeatureExtractor | None,
-    feature_key: str,
-    outcome: ScanOutcome,
-) -> None:
-    """Run the feature stage and record its outcome (valid or failed)."""
-    if extractor is None:
-        return
-    extraction = extractor.extract(FeatureRequest(page_texts=[page.text for page in pages]))
-    outcome.features_run += 1
-    outcome.model_calls += max(1, extraction.chunks)
-    if extraction.features is not None:
-        catalog.set_facts(db, revision_id, features_to_facts(extraction.features))
-        processing.record_feature_result(db, revision_id, feature_key=feature_key)
-        return
-    reason = extraction.blocked_reason or "unknown"
-    if reason.startswith("inference_"):
-        processing.record_feature_result(
-            db, revision_id, feature_key=feature_key, error_category=reason
-        )
-        return
-    processing.record_feature_result(db, revision_id, feature_key=feature_key)
-    catalog.record_review(db, kind="feature_blocked", detail=reason, revision_id=revision_id)
-    outcome.reviews += 1
-
-
 def _defer_large(db: Database, path: Path, tracker: BudgetTracker, outcome: ScanOutcome) -> bool:
     """Defer a changed file whose page count exceeds the remaining page budget."""
     existing = catalog.get_location_by_path(db, path)
@@ -378,10 +361,8 @@ def _defer_large(db: Database, path: Path, tracker: BudgetTracker, outcome: Scan
     estimate = estimate_page_count(path)
     if estimate <= room:
         return False
-    from renamr.core.facts import record_review_once
-
     label = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
-    record_review_once(db, kind="scan_budget_deferred", detail=label)
+    record_review_once(db, kind="scan_budget_deferred", detail=f"{label}|{estimate}")
     outcome.deferred += 1
     outcome.budget_exhausted = True
     return True
@@ -389,8 +370,6 @@ def _defer_large(db: Database, path: Path, tracker: BudgetTracker, outcome: Scan
 
 def _record_oversized(db: Database, path: Path, outcome: ScanOutcome) -> None:
     """Record a durable review for a file over the byte limit without hashing it."""
-    from renamr.core.facts import record_review_once
-
     label = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:16]
     record_review_once(db, kind="oversized_file", detail=label)
     outcome.oversized += 1

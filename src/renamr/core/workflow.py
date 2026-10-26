@@ -135,6 +135,12 @@ def retry_revision(ws: Workspace, revision_id: str) -> None:
         processing.retry_revision(ws.db, revision_id)
 
 
+def retry_deferred_features(ws: Workspace, root_ids: list[str]) -> int:
+    """Clear budget-deferred feature markers for selected roots before retry."""
+    with ws.lock():
+        return processing.retry_deferred_features(ws.db, root_ids)
+
+
 def create_rule_draft(
     ws: Workspace,
     *,

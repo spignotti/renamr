@@ -139,18 +139,7 @@ def test_sharing_export_refuses_registered_source_and_overwrite_confirm(
     assert "[[PAGE 1]]" in destination.read_text()
 
 
-def test_onboarding_classifies_selected_scope_and_seeds_trusted_examples(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    state, config = tmp_path / "state", tmp_path / "config.toml"
-    Workspace.bootstrap(state, config_path=config)
-    library = tmp_path / "Library"
-    (library / "Invoices").mkdir(parents=True)
-    (library / "Invoices" / "invoice.txt").write_text("Rechnung von Beispiel")
-    for name in ("Inbox", "Archive"):
-        (tmp_path / name).mkdir()
-    roles: list[str] = []
-
+def _install_fake_onboarding(monkeypatch: pytest.MonkeyPatch, roles: list[str]) -> None:
     @contextmanager
     def fake_session(settings: Settings, *, role: str):
         roles.append(role)
@@ -168,25 +157,8 @@ def test_onboarding_classifies_selected_scope_and_seeds_trusted_examples(
     monkeypatch.setattr(onboard_module, "verify_and_key", fake_key)
     monkeypatch.setattr(onboard_module, "feature_extractor", fake_extractor)
 
-    result = runner.invoke(
-        app,
-        [
-            "onboard",
-            "--inbox",
-            str(tmp_path / "Inbox"),
-            "--library",
-            str(library),
-            "--archive",
-            str(tmp_path / "Archive"),
-            "--no-questions",
-            "--config",
-            str(config),
-        ],
-    )
 
-    assert result.exit_code == 0, result.stdout
-    assert roles[:3] == ["small", "verify:small", "extractor:small"]
-    workspace = Workspace.open(config_path=config)
+def _assert_onboarding_result(workspace: Workspace, library: Path) -> None:
     location = catalog.get_location_by_path(workspace.db, library / "Invoices" / "invoice.txt")
     assert location is not None
     facts = {
@@ -208,6 +180,40 @@ def test_onboarding_classifies_selected_scope_and_seeds_trusted_examples(
     assert candidates[0].scope_root_id == inbox_root.root_id
     assert candidates[0].target_root_id == library_root.root_id
     assert candidates[0].target_subdir == "Invoices"
+
+
+def test_onboarding_classifies_selected_scope_and_seeds_trusted_examples(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.toml"
+    Workspace.bootstrap(tmp_path / "state", config_path=config)
+    library = tmp_path / "Library"
+    (library / "Invoices").mkdir(parents=True)
+    (library / "Invoices" / "invoice.txt").write_text("Rechnung von Beispiel")
+    for name in ("Inbox", "Archive"):
+        (tmp_path / name).mkdir()
+    roles: list[str] = []
+    _install_fake_onboarding(monkeypatch, roles)
+
+    result = runner.invoke(
+        app,
+        [
+            "onboard",
+            "--inbox",
+            str(tmp_path / "Inbox"),
+            "--library",
+            str(library),
+            "--archive",
+            str(tmp_path / "Archive"),
+            "--no-questions",
+            "--config",
+            str(config),
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert roles[:3] == ["small", "verify:small", "extractor:small"]
+    _assert_onboarding_result(Workspace.open(config_path=config), library)
 
 
 def test_library_only_onboarding_preserves_unrelated_inbox_targets(

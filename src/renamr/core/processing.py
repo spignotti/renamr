@@ -75,6 +75,10 @@ def plan_stage(
         return _retry_or_skip(revision, now, Stage.EXTRACT)
     if revision.extract_key != extract_key or not has_pages:
         return Stage.EXTRACT
+    if revision.failed_stage == "features_deferred":
+        if feature_key is None or revision.error_category == feature_key:
+            return Stage.SKIP
+        return Stage.FEATURES
     if feature_key is not None and revision.feature_key != feature_key:
         if revision.failed_stage == "features":
             return _retry_or_skip(revision, now, Stage.FEATURES)
@@ -203,6 +207,40 @@ def retry_revision(db: Database, revision_id: str) -> None:
     else:
         fields["feature_key"] = ""
     _update(db, revision_id, fields)
+
+
+def record_feature_deferred(db: Database, revision_id: str, *, feature_key: str) -> None:
+    """Record a non-failure deferral that retries only after the budget changes.
+
+    The feature key is not marked current, so facts cannot be mistaken for a
+    complete extraction. The stored key lets a later scan skip the same deferred
+    work until the model, prompt, or budget signature changes.
+    """
+    _update(
+        db,
+        revision_id,
+        {
+            "failed_stage": "features_deferred",
+            "error_category": feature_key,
+            "next_retry_at": "",
+            "attempts": 0,
+        },
+    )
+
+
+def retry_deferred_features(db: Database, root_ids: list[str]) -> int:
+    """Clear deferred feature markers for selected roots before a manual retry."""
+    from renamr.core import catalog
+
+    retried = 0
+    for root_id in dict.fromkeys(root_ids):
+        for location in catalog.locations_for_root(db, root_id):
+            revision = catalog.get_revision(db, location.revision_id)
+            if revision.failed_stage != "features_deferred":
+                continue
+            retry_revision(db, revision.revision_id)
+            retried += 1
+    return retried
 
 
 def _retry_or_skip(revision: RevisionRecord, now: datetime, stage: Stage) -> Stage:

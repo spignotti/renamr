@@ -176,6 +176,23 @@ def dismiss_review(db: Database, review_id: str, *, note: str = "") -> None:
 
 def _question(kind: str, detail: str) -> str:
     """Return a focused question for a review kind."""
+    if kind == "feature_deferred":
+        return (
+            "Feature extraction stopped before every chunk was complete. Raise the feature or "
+            "service budget, then run a manual scan to retry this document."
+        )
+    if kind == "feature_incomplete":
+        return (
+            "The model returned an incomplete or invalid feature result. Run a manual scan to "
+            "retry after checking the local model, or label the document in review."
+        )
+    if kind == "scan_budget_deferred":
+        return (
+            "This file's estimated page count exceeds the remaining scan budget. Raise the "
+            "service page budget or run a manual scan to process it."
+        )
+    if kind == "oversized_file":
+        return "This file exceeds the configured byte limit. Raise the limit or handle it manually."
     if kind == "unmatched_placement":
         return (
             "No active rule routes this readable document. Choose an explicit target root and "

@@ -10,14 +10,21 @@ from typing import cast
 
 import pytest
 
-from renamr.benchmark_schema import DocumentFeatures, DocumentType, GroundingEvidence
-from renamr.core import catalog, hashing, workflow
+from renamr.benchmark_schema import (
+    DocumentFeatures,
+    DocumentType,
+    GroundingEvidence,
+    RulePredicate,
+)
+from renamr.core import catalog, hashing, mutation, workflow
 from renamr.core.db import Database
 from renamr.core.extract import ExtractionResult, ExtractorLimits
 from renamr.core.extract_runner import ExtractionRunner, InProcessRunner, SubprocessRunner
 from renamr.core.features import (
+    FeatureExtraction,
     FeatureExtractor,
     FeatureRequest,
+    FeatureValidation,
     LocalFeatureExtractor,
     build_chunk_text,
     chunk_pages,
@@ -375,3 +382,53 @@ def test_enabling_extractor_later_reruns_only_features(tmp_path: Path) -> None:
     assert runner.calls == 1  # no re-OCR of unchanged content
     facts = {fact.field: fact.value for fact in catalog.get_facts(ws.db, revision_id)}
     assert facts["document_type"] == "payslip"
+
+
+class _PartialExtractor:
+    """Return grounded features alongside an explicit incomplete flag."""
+
+    def extract(self, request: FeatureRequest) -> FeatureExtraction:
+        return FeatureExtraction(
+            features=DocumentFeatures(
+                document_type="invoice", subject="Rechnung", needs_review=False
+            ),
+            validation=FeatureValidation(ok=True),
+            incomplete=True,
+            blocked_reason="inference_failed",
+            chunks=2,
+        )
+
+
+def test_partial_feature_success_never_qualifies_for_routing(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    inbox, root = _inbox(ws, tmp_path)
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    archive_root = workflow.register_root(ws, archive, role=RootRole.ARCHIVE)
+    workflow.set_allowed_targets(ws, root.root_id, [archive_root.root_id])
+    ws.save_settings(Settings(stability_window_s=0))
+    (inbox / "partial.txt").write_text("Rechnung synthetic example")
+    ws.runner = InProcessRunner()
+    ws.extractor = _PartialExtractor()
+    workflow.scan(ws, root.root_id)
+
+    location = catalog.locations_for_root(ws.db, root.root_id)[0]
+    assert not any(
+        fact.field == "document_type" for fact in catalog.get_facts(ws.db, location.revision_id)
+    )
+    rule = workflow.create_rule_draft(
+        ws,
+        scope_root_id=root.root_id,
+        target_root_id=archive_root.root_id,
+        predicates=[RulePredicate(field="document_type", operator="equals", values=["invoice"])],
+        filename_template="{subject}",
+    )
+    workflow.mark_tested(ws, rule.rule_id)
+    workflow.activate_rule(ws, rule.rule_id)
+
+    run_id = mutation.preview_routing(ws, root.root_id)
+
+    assert mutation.run_items(ws, run_id) == []
+    kinds = {item["kind"] for item in workflow.review_items(ws)}
+    assert "feature_incomplete" in kinds
+    assert "features_unresolved" in kinds

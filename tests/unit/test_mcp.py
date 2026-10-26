@@ -114,56 +114,57 @@ def test_conflicting_fact_exports_state_without_value(tmp_path: Path) -> None:
     assert exported.facts["start_date"].value is None
 
 
+async def _exercise_stdio(workspace: Workspace, contract_id: str) -> None:
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=[
+            "-m",
+            "renamr",
+            "mcp",
+            "serve",
+            "--state-dir",
+            str(workspace.state_dir),
+        ],
+    )
+    async with Client(params) as client:
+        tools = await client.list_tools()
+        assert [tool.name for tool in tools.tools] == [
+            "list_approved_contracts",
+            "get_contract_facts",
+        ]
+        discovery = await client.call_tool("list_approved_contracts", {})
+        assert discovery.structured_content == {
+            "contracts": [{"available": True, "alias": "alpha", "facts": {}}],
+            "limit": 50,
+        }
+        exported = await client.call_tool("get_contract_facts", {"alias": "alpha"})
+        structured = exported.structured_content
+        assert structured is not None
+        assert set(structured["facts"]) == {"provider", "end_date"}
+        content = exported.content[0]
+        assert isinstance(content, TextContent)
+        assert '"value": "Beispiel Versicherung AG"' in content.text
+        assert "evidence_quote" not in content.text
+        assert "source_revision_id" not in content.text
+
+        mcp_gateway.revoke_field(workspace.db, contract_id, "provider")
+        after = await client.call_tool("get_contract_facts", {"alias": "alpha"})
+        assert after.structured_content is not None
+        assert set(after.structured_content["facts"]) == {"end_date"}
+
+        denied = await client.call_tool("get_contract_facts", {"alias": "unknown"})
+        assert denied.structured_content == {
+            "available": False,
+            "alias": "",
+            "facts": {},
+        }
+        assert denied.is_error is False
+
+
 def test_stdio_roundtrip_and_next_request_revocation(tmp_path: Path) -> None:
     workspace, ids = _contracts(tmp_path)
     workflow.set_contract_alias(workspace, ids[0], "alpha")
     mcp_gateway.grant_field(workspace.db, ids[0], "provider")
     mcp_gateway.grant_field(workspace.db, ids[0], "end_date")
 
-    async def scenario() -> None:
-        params = StdioServerParameters(
-            command=sys.executable,
-            args=[
-                "-m",
-                "renamr",
-                "mcp",
-                "serve",
-                "--state-dir",
-                str(workspace.state_dir),
-            ],
-        )
-        async with Client(params) as client:
-            tools = await client.list_tools()
-            assert [tool.name for tool in tools.tools] == [
-                "list_approved_contracts",
-                "get_contract_facts",
-            ]
-            discovery = await client.call_tool("list_approved_contracts", {})
-            assert discovery.structured_content == {
-                "contracts": [{"available": True, "alias": "alpha", "facts": {}}],
-                "limit": 50,
-            }
-            exported = await client.call_tool("get_contract_facts", {"alias": "alpha"})
-            structured = exported.structured_content
-            assert structured is not None
-            assert set(structured["facts"]) == {"provider", "end_date"}
-            content = exported.content[0]
-            assert isinstance(content, TextContent)
-            assert '"value": "Beispiel Versicherung AG"' in content.text
-            assert "evidence_quote" not in content.text
-            assert "source_revision_id" not in content.text
-
-            mcp_gateway.revoke_field(workspace.db, ids[0], "provider")
-            after = await client.call_tool("get_contract_facts", {"alias": "alpha"})
-            assert after.structured_content is not None
-            assert set(after.structured_content["facts"]) == {"end_date"}
-
-            denied = await client.call_tool("get_contract_facts", {"alias": "unknown"})
-            assert denied.structured_content == {
-                "available": False,
-                "alias": "",
-                "facts": {},
-            }
-            assert denied.is_error is False
-
-    asyncio.run(scenario())
+    asyncio.run(_exercise_stdio(workspace, ids[0]))

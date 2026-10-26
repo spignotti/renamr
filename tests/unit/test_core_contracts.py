@@ -8,6 +8,7 @@ import pytest
 
 from renamr.core import catalog, contracts, processing, workflow
 from renamr.core.catalog import PageRecord, QualityState
+from renamr.core.contract_fields import parse_contract_document
 from renamr.core.errors import CoreError
 from renamr.core.extract_runner import InProcessRunner
 from renamr.core.roots import RootRole
@@ -193,3 +194,54 @@ def test_manual_membership_exception(tmp_path: Path) -> None:
         workflow.assign_contract_member(
             workspace, contract.contract_id, root_id=root_id, relative_path="../escape"
         )
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("Kosten: 1200,00 EUR monatlich", "1200.00"),
+        ("Kosten: 12.000,00 EUR monatlich", "12000.00"),
+        ("Kosten: 1 200,00 EUR monatlich", "1200.00"),
+        ("Kosten: 1,200.00 EUR monthly", "1200.00"),
+        ("Kosten: 1200.00 EUR monthly", "1200.00"),
+        ("Kosten: 1200 EUR monatlich", "1200.00"),
+    ],
+)
+def test_cost_amounts_use_complete_tokens(line: str, expected: str) -> None:
+    parsed = parse_contract_document("rev-cost", [(1, line)], complete=True)
+    amount = next(item for item in parsed.fields if item.field == "cost_amount")
+
+    assert amount.value == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Kosten: 1.200 EUR monatlich",
+        "Kosten: 1,200 EUR monatlich",
+        "Kosten: 1200,000 EUR monatlich",
+    ],
+)
+def test_ambiguous_or_partial_amounts_are_rejected(line: str) -> None:
+    parsed = parse_contract_document("rev-ambiguous", [(1, line)], complete=True)
+
+    assert not any(item.field == "cost_amount" for item in parsed.fields)
+
+
+@pytest.mark.parametrize(
+    ("line", "expected_days", "expected_deadline"),
+    [
+        ("Kündigungsfrist: 2 Wochen", "14", "2026-12-17"),
+        ("Notice period: 2 weeks", "14", "2026-12-17"),
+        ("Notice period: 10 days", "10", "2026-12-21"),
+        ("Kündigungsfrist: 2 Wochen zum Monatsende", "14", "2026-12-17"),
+    ],
+)
+def test_week_and_day_notice_periods(line: str, expected_days: str, expected_deadline: str) -> None:
+    text = f"Vertragsende: 2026-12-31\n{line}"
+    parsed = parse_contract_document("rev-notice", [(1, text)], complete=True)
+    days = next(item for item in parsed.fields if item.field == "notice_period_days")
+    deadline = next(item for item in parsed.fields if item.field == "notice_deadline")
+
+    assert days.value == expected_days
+    assert deadline.value == expected_deadline

@@ -127,8 +127,6 @@ def _tick_locked(ws: Workspace, started: float, lock: WriterLock) -> TickResult:
         used_docs += min(budgets.max_documents, outcome.new_revisions + outcome.changed)
         used_pages += outcome.pages_extracted
         result.roots_scanned += 1
-        if outcome.budget_exhausted:
-            break
     if _need_features(ws, settings) and used_models < budgets.max_model_calls:
         used_models += _feature_pass(ws, settings, result, used_pages, started)
     result.observations = len(examples.observe_manual_moves(ws.db))
@@ -155,14 +153,12 @@ def _feature_pass(
         info = verify_model(inference, settings.model_roles.small)
         if not info.digest:
             raise InferenceError("model_digest_unavailable")
-        digest = info.digest
+        ws.model_digest = info.digest
+        ws.extractor = _feature_extractor(settings, inference)
+        return _run_feature_roots(ws, settings, result, used_pages, started)
     except (OSError, RuntimeError, TimeoutError, CoreError, InferenceError):
         result.error = "inference_unavailable"
         return 0
-    ws.model_digest = digest
-    ws.extractor = _feature_extractor(settings, inference)
-    try:
-        return _run_feature_roots(ws, settings, result, used_pages, started)
     finally:
         if server.started_by_us:
             server.stop()
@@ -201,9 +197,6 @@ def _run_feature_roots(
         _collect(result, outcome)
         used_models += outcome.model_calls
         used_pages += outcome.pages_extracted
-        if outcome.budget_exhausted:
-            result.deferred += outcome.deferred
-            break
     return used_models
 
 
@@ -272,7 +265,11 @@ def _collect(result: TickResult, outcome: reconcile.ScanOutcome) -> None:
 
 
 def _need_features(ws: Workspace, settings: Settings) -> bool:
-    """Return whether any catalogued revision needs a routine feature pass."""
+    """Return whether any catalogued revision needs a routine feature pass.
+
+    Budget-deferred revisions stay visible in service status but are retried by a
+    manual ``run`` or an explicit retry, not by every scheduled tick.
+    """
     prefix = (
         f"{settings.model_roles.small}|{settings.output_mode}|{processing.FEATURE_PROMPT_VERSION}|"
     )
@@ -281,7 +278,7 @@ def _need_features(ws: Workspace, settings: Settings) -> bool:
             revision = catalog.get_revision(ws.db, location.revision_id)
             if revision.quality_state not in (catalog.QualityState.OK, catalog.QualityState.LOW):
                 continue
-            if revision.failed_stage == "features":
+            if revision.failed_stage in ("features", "features_deferred"):
                 continue
             if not revision.feature_key.startswith(prefix):
                 return True
@@ -377,7 +374,9 @@ def _pending_features(ws: Workspace) -> int:
         for location in catalog.locations_for_root(ws.db, root.root_id):
             revision = catalog.get_revision(ws.db, location.revision_id)
             if revision.quality_state in (catalog.QualityState.OK, catalog.QualityState.LOW):
-                if not revision.feature_key.startswith(prefix):
+                if revision.failed_stage == "features_deferred":
+                    count += 1
+                elif not revision.feature_key.startswith(prefix):
                     count += 1
     return count
 

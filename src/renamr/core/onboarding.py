@@ -86,7 +86,7 @@ def wire_selected_inboxes(db: Database, selected_root_ids: list[str]) -> None:
         root_id: roots.get_root(db, root_id) for root_id in dict.fromkeys(selected_root_ids)
     }
     addresses = [
-        item for item in roots.list_roots(db) if item.role in (RootRole.LIBRARY, RootRole.ARCHIVE)
+        item for item in selected.values() if item.role in (RootRole.LIBRARY, RootRole.ARCHIVE)
     ]
     for inbox in (item for item in selected.values() if item.role is RootRole.INBOX):
         targets = list(inbox.allowed_target_ids)
