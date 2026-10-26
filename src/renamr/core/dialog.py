@@ -135,7 +135,7 @@ class DialogCompleter(Protocol):
         keep_alive: str | None = None,
     ) -> StructuredResult[ModelT]:
         """Return one validated structured response."""
-        raise NotImplementedError
+        ...
 
 
 class DialogProposal(BaseModel):
