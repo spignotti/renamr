@@ -71,8 +71,14 @@ def document_export(
 ) -> None:
     """Export complete stored page text; original bytes are never rewritten."""
     workspace = open_workspace(config, state_dir)
-    if overwrite and not confirm(
-        f"Overwrite existing export destination {to}?", yes=yes, input_text="yes" if yes else None
+    if (
+        overwrite
+        and to.exists()
+        and not confirm(
+            f"Overwrite existing export destination {to}?",
+            yes=yes,
+            input_text="yes" if yes else None,
+        )
     ):
         typer.echo("Export left unapplied.")
         return

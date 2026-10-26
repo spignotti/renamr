@@ -328,16 +328,17 @@ def remap_moved_path(db: Database, *, old_path: Path, new_path: Path, target_roo
     for row in rows:
         root = roots.get_root(db, str(row["root_id"]))
         current = root.canonical_path.joinpath(*str(row["relative_path"]).split("/"))
-        if current != old_path:
+        target_relative = _moved_member_relative(current, old_path, new_relative)
+        if target_relative is None:
             continue
-        dev, ino = member_identity(target_root, new_relative)
+        dev, ino = member_identity(target_root, target_relative)
         with db.transaction() as connection:
             connection.execute(
                 "UPDATE contract_members SET root_id = ?, relative_path = ?, dev = ?, ino = ? "
                 "WHERE contract_id = ? AND root_id = ? AND relative_path = ?",
                 (
                     target_root.root_id,
-                    new_relative,
+                    target_relative,
                     dev,
                     ino,
                     str(row["contract_id"]),
@@ -347,6 +348,25 @@ def remap_moved_path(db: Database, *, old_path: Path, new_path: Path, target_roo
             )
         updated += 1
     return updated
+
+
+def _moved_member_relative(current: Path, old_path: Path, new_relative: str) -> str | None:
+    """Return the new member path for an exact member file or moved folder."""
+    if current == old_path:
+        return new_relative
+    if current.exists():
+        return None
+    try:
+        remainder = old_path.relative_to(current).as_posix()
+    except ValueError:
+        return None
+    if not remainder:
+        return None
+    if new_relative == remainder:
+        return ""
+    if new_relative.endswith(f"/{remainder}"):
+        return new_relative[: -(len(remainder) + 1)]
+    return None
 
 
 def _set_entity(db: Database, revision_id: str, contract_id: str, state: str) -> bool:

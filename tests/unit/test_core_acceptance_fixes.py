@@ -403,6 +403,32 @@ def test_unmatched_question_is_deduplicated_and_explicit_destination_moves_once(
     assert any(item.target_subdir == "Invoices" for item in candidates)
 
 
+def test_confirmed_manual_folder_move_keeps_contract_id(tmp_path: Path) -> None:
+    workspace, _, library_root, archive_root = _roots(tmp_path)
+    folder = tmp_path / "Library" / "Contracts" / "A"
+    folder.mkdir(parents=True)
+    (folder / "initial.txt").write_text("Vertragsnummer: V-1\n")
+    _scan(workspace, library_root.root_id)
+    contract = workflow.configure_contracts(
+        workspace, library_root.root_id, confirmed=True, base_path="Contracts"
+    )[0]
+    folder.rename(tmp_path / "Archive" / "A")
+    _scan(workspace, library_root.root_id)
+    _scan(workspace, archive_root.root_id)
+    workflow.observe_manual_moves(workspace)
+    question = next(
+        item
+        for item in review.review_questions(workspace.db)
+        if item.kind in ("possible_move", "path_missing")
+    )
+    workflow.resolve_manual_move(workspace, question.review_id, accept=True)
+
+    current = contracts.get_contract(workspace.db, contract.contract_id)
+    assert current.contract_id == contract.contract_id
+    assert current.members[0].root_id == archive_root.root_id
+    assert current.members[0].relative_path == "A"
+
+
 def test_repeated_destination_choices_create_a_testable_draft_only(tmp_path: Path) -> None:
     workspace, inbox_root, _, archive_root = _roots(tmp_path)
     for name in ("first.txt", "second.txt"):

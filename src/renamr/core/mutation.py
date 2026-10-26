@@ -189,20 +189,25 @@ def _check_planned_route(ws: Workspace, source_root_id: str | None, item: RunIte
     """
     if source_root_id is None or not item.rule_id or item.revision_id is None:
         return
-    root = roots.get_root(ws.db, source_root_id)
-    facts = _facts_for_routing(catalog.get_facts(ws.db, item.revision_id))
-    decision = rules.select_rule(
-        rules.active_rules(ws.db),
-        scope_root_id=source_root_id,
-        relative_path=_relative(item.source_path, root.canonical_path),
-        facts=facts,
-    )
-    if decision.state != "routed" or decision.target_root_id is None:
-        raise PreconditionError("routing_plan_stale")
-    if decision.rule_id != item.rule_id or decision.rule_revision != item.rule_revision:
-        raise PreconditionError("routing_plan_stale")
-    target_root = roots.get_root(ws.db, decision.target_root_id)
-    expected_dir = roots.resolve_subpath(target_root, decision.target_subdir)
+    try:
+        root = roots.get_root(ws.db, source_root_id)
+        facts = _facts_for_routing(catalog.get_facts(ws.db, item.revision_id))
+        decision = rules.select_rule(
+            rules.active_rules(ws.db),
+            scope_root_id=source_root_id,
+            relative_path=_relative(item.source_path, root.canonical_path),
+            facts=facts,
+        )
+        if decision.state != "routed" or decision.target_root_id is None:
+            raise PreconditionError("routing_plan_stale")
+        if decision.rule_id != item.rule_id or decision.rule_revision != item.rule_revision:
+            raise PreconditionError("routing_plan_stale")
+        target_root = roots.get_root(ws.db, decision.target_root_id)
+        expected_dir = roots.resolve_subpath(target_root, decision.target_subdir)
+    except PreconditionError:
+        raise
+    except CoreError:
+        raise PreconditionError("routing_plan_stale") from None
     if item.target_path is None or item.target_path.parent != expected_dir:
         raise PreconditionError("routing_plan_stale")
 

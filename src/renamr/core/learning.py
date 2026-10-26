@@ -175,7 +175,7 @@ def evaluate(db: Database, candidate: RuleCandidate) -> RuleImpact:
         decision = rules.select_rule(
             active,
             scope_root_id=candidate.scope_root_id,
-            relative_path=_relative_path(example),
+            relative_path=_relative_path(db, example, candidate.scope_root_id),
             facts=features,
         )
         if decision.state == "conflict" or (
@@ -185,10 +185,16 @@ def evaluate(db: Database, candidate: RuleCandidate) -> RuleImpact:
     return impact
 
 
-def _relative_path(example: examples.Example) -> str:
-    """Return a synthetic scope-relative path for example routing checks."""
-    value = _payload(example, "new_path") or _payload(example, "old_path")
-    return "" if value is None else Path(value).name
+def _relative_path(db: Database, example: examples.Example, scope_root_id: str) -> str:
+    """Return the example's path relative to its scope root when available."""
+    value = _payload(example, "old_path") or _payload(example, "new_path")
+    if value is None:
+        return ""
+    try:
+        root = roots.get_root(db, scope_root_id)
+        return Path(value).relative_to(root.canonical_path).as_posix()
+    except (CoreError, ValueError):
+        return Path(value).name
 
 
 def active_rule_fingerprint(db: Database) -> str:
