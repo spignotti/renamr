@@ -22,10 +22,12 @@ from renamr.core.roots import RootRole, register_root
 from renamr.core.settings import (
     LEGACY_MIGRATION_KEY,
     ModelRoles,
+    Settings,
     get_setting,
     load_settings,
     save_settings,
     set_setting,
+    validate_filename_template,
 )
 from renamr.local_transport import EndpointValidationError, normalize_model_name, validate_endpoint
 
@@ -97,6 +99,21 @@ def preview_legacy_migration(config_path: Path, *, state_dir: Path) -> Migration
     roots = _preview_roots(raw)
     model_roles, endpoint = _preview_models(raw, issues)
     _reject_compression(raw, issues)
+    template = _preview_template(raw)
+    if template is not None:
+        try:
+            validate_filename_template(template)
+        except ValueError:
+            issues.append(
+                MigrationIssue(
+                    code="invalid_filename_template",
+                    message=(
+                        "legacy filename_template is not supported in v2; "
+                        "use only {date}, {sender}, {subject}, {document_type}"
+                    ),
+                )
+            )
+            template = None
     if not roots:
         issues.append(
             MigrationIssue(
@@ -108,7 +125,7 @@ def preview_legacy_migration(config_path: Path, *, state_dir: Path) -> Migration
         state_dir=Path(state_dir),
         roots=roots,
         languages=_preview_languages(raw),
-        default_filename_template=_preview_template(raw),
+        default_filename_template=template,
         model_roles=model_roles,
         endpoint=endpoint,
         issues=issues,
@@ -134,8 +151,9 @@ def apply_legacy_migration(
         raise LegacyRejectedError(blocked)
     if get_setting(db, LEGACY_MIGRATION_KEY) is not None:
         raise ConfigError("legacy migration was already applied")
+    merged = _validated_settings(db, preview)
     imported, skipped = _import_roots(db, preview, Path(state_dir))
-    _persist_settings(db, preview)
+    save_settings(db, merged)
     _record_migration(db, preview, imported)
     return MigrationResult(
         applied=True, roots_imported=imported, skipped_roots=skipped, backup_path=backup_path
@@ -354,8 +372,12 @@ def _reject_compression(raw: dict[str, Any], issues: list[MigrationIssue]) -> No
         )
 
 
-def _persist_settings(db: Database, preview: MigrationPreview) -> None:
-    """Persist migrated behavior settings, preserving existing values."""
+def _validated_settings(db: Database, preview: MigrationPreview) -> Settings:
+    """Validate the complete merged settings payload before any write.
+
+    Raises:
+        ConfigError: If the imported values would make the stored settings invalid.
+    """
     current = load_settings(db)
     updates: dict[str, Any] = {"languages": preview.languages}
     if preview.model_roles is not None:
@@ -364,4 +386,7 @@ def _persist_settings(db: Database, preview: MigrationPreview) -> None:
         updates["endpoint"] = preview.endpoint
     if preview.default_filename_template:
         updates["default_filename_template"] = preview.default_filename_template
-    save_settings(db, current.model_copy(update=updates))
+    try:
+        return Settings.model_validate({**current.model_dump(), **updates})
+    except ValueError as exc:
+        raise ConfigError(f"legacy settings cannot be migrated: {exc}") from None

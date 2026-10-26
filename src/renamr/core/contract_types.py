@@ -68,3 +68,17 @@ class ContractRefreshResult(BaseModel):
     incomplete_documents: int = 0
     conflicts: int = 0
     skipped: int = 0
+    references: int = 0
+    entities: int = 0
+
+
+class ContractReference(BaseModel):
+    """One private reference number with its stable contract identity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_id: str
+    value: str
+    value_key: str
+    source_revision_id: str
+    source_page: int

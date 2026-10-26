@@ -181,8 +181,14 @@ def ensure_private_file(path: Path) -> Path:
     return file_path
 
 
-def write_private_file(path: Path, data: bytes, *, require_private_parent: bool = True) -> Path:
-    """Atomically write bytes to a new owner-only file.
+def write_private_file(
+    path: Path,
+    data: bytes,
+    *,
+    require_private_parent: bool = True,
+    overwrite: bool = True,
+) -> Path:
+    """Atomically write bytes to an owner-only file.
 
     Uses a unique exclusive temp file so a pre-planted temp name or symlink
     cannot redirect the write. When ``require_private_parent`` is true the parent
@@ -190,9 +196,13 @@ def write_private_file(path: Path, data: bytes, *, require_private_parent: bool 
     required to exist, so explicit exports and bootstrap files can live in an
     ordinary user directory while the file itself stays ``0600``.
 
+    With ``overwrite=False`` the file is installed by an atomic hard link, so an
+    occupied destination is refused and its contents and permissions are left
+    untouched even if it appears during the write.
+
     Raises:
         StateError: If a private parent is required but not private, or the atomic
-            replace fails.
+            install fails or is refused.
     """
     destination = Path(path)
     if require_private_parent:
@@ -210,12 +220,29 @@ def write_private_file(path: Path, data: bytes, *, require_private_parent: bool 
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp_path, destination)
+        if overwrite:
+            os.replace(temp_path, destination)
+        else:
+            _link_no_clobber(temp_path, destination)
     except BaseException:
         temp_path.unlink(missing_ok=True)
         raise
     _validate_private_file(destination)
     return destination
+
+
+def _link_no_clobber(source: Path, destination: Path) -> None:
+    """Install a file without replacing an existing destination."""
+    try:
+        os.link(source, destination)
+    except FileExistsError:
+        raise StateError(
+            "destination already exists; overwrite requires explicit confirmation"
+        ) from None
+    except OSError:
+        raise StateError("file could not be installed atomically") from None
+    finally:
+        source.unlink(missing_ok=True)
 
 
 def harden_sidecars(db_path: Path) -> None:

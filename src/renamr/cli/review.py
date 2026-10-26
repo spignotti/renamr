@@ -8,9 +8,10 @@ from typing import Annotated
 
 import typer
 
-from renamr.cli.common import CliError, ConfigOption, StateOption, open_workspace
+from renamr.cli.common import CliError, ConfigOption, StateOption, confirm, open_workspace
 from renamr.core import review, workflow
 from renamr.core.errors import CoreError
+from renamr.core.placement import PlacementPreview
 from renamr.core.sanitize import clean_text
 from renamr.core.workspace import Workspace
 
@@ -39,6 +40,20 @@ NegativeOpt = Annotated[
 ]
 NotesOpt = Annotated[str, typer.Option("--notes", help="Short local decision note.")]
 YesOpt = Annotated[bool, typer.Option("--yes", "-y", help="Confirm interactive questions.")]
+DestinationRootOpt = Annotated[
+    str | None,
+    typer.Option("--destination-root", "--target-root", help="Explicit allowed target root id."),
+]
+DestinationFolderOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--destination-folder", "--target-folder", help="Root-relative destination folder."
+    ),
+]
+DestinationNameOpt = Annotated[
+    str | None,
+    typer.Option("--destination-name", help="Optional destination filename; defaults to source."),
+]
 
 
 def review_command(
@@ -53,6 +68,9 @@ def review_command(
     dismiss: DismissOpt = False,
     negative: NegativeOpt = False,
     notes: NotesOpt = "",
+    destination_root: DestinationRootOpt = None,
+    destination_folder: DestinationFolderOpt = None,
+    destination_name: DestinationNameOpt = None,
     yes: YesOpt = False,
 ) -> None:
     """List and resolve pending document, move, rule, and identity questions."""
@@ -70,6 +88,10 @@ def review_command(
             dismiss=dismiss,
             negative=negative,
             notes=notes,
+            destination_root=destination_root,
+            destination_folder=destination_folder or "",
+            destination_name=destination_name,
+            yes=yes,
         )
         return
     questions = review.review_questions(workspace.db)
@@ -109,6 +131,10 @@ def _resolve_one(
     dismiss: bool,
     negative: bool,
     notes: str,
+    destination_root: str | None,
+    destination_folder: str,
+    destination_name: str | None,
+    yes: bool,
 ) -> None:
     """Resolve one review item from explicit flags."""
     actions = [
@@ -117,10 +143,12 @@ def _resolve_one(
         accept is not None,
         dismiss,
         negative,
+        destination_root is not None,
     ]
     if sum(actions) != 1:
         raise CliError(
-            "choose exactly one of --label, --negative, --template, --accept/--reject, --dismiss"
+            "choose exactly one of --label, --negative, --template, --accept/--reject, "
+            "--destination-root, --dismiss"
         )
     if negative:
         fields = _fields(label)
@@ -141,9 +169,69 @@ def _resolve_one(
             typer.echo("Rejected the move candidate; no example was created.")
         else:
             typer.echo(f"Confirmed manual-move example {example.example_id}.")
+    elif destination_root is not None:
+        _resolve_destination(
+            workspace,
+            review_id,
+            target_root_id=destination_root,
+            target_folder=destination_folder,
+            name=destination_name,
+            yes=yes,
+        )
     else:
         workflow.dismiss_review(workspace, review_id, note=notes)
         typer.echo("Review item dismissed without creating an example.")
+
+
+def _resolve_destination(
+    workspace: Workspace,
+    review_id: str,
+    *,
+    target_root_id: str,
+    target_folder: str,
+    name: str | None,
+    yes: bool,
+) -> None:
+    """Preview and apply one explicit destination move after confirmation."""
+    preview = workflow.preview_placement(
+        workspace,
+        review_id,
+        target_root_id=target_root_id,
+        target_subdir=target_folder,
+        filename=name,
+    )
+    _print_placement(preview)
+    if not confirm(
+        "Move this document to the displayed destination?",
+        yes=yes,
+        input_text="yes" if yes else None,
+    ):
+        typer.echo("Destination left unapplied.")
+        return
+    result = workflow.apply_placement(
+        workspace,
+        review_id,
+        target_root_id=target_root_id,
+        target_subdir=target_folder,
+        filename=name,
+    )
+    typer.echo(
+        f"moved through run {result.run_id}; recorded destination example "
+        f"{result.example_id}; no rule was activated"
+    )
+    if result.draft_rule_ids:
+        typer.echo(
+            f"created {len(result.draft_rule_ids)} testable draft rule(s) from repeated "
+            "placements; test and activation remain separate"
+        )
+
+
+def _print_placement(preview: PlacementPreview) -> None:
+    """Render the validated source, destination, and name before confirmation."""
+    typer.echo(f"source: {clean_text(str(preview.source_path))}")
+    typer.echo(f"destination folder: {clean_text(str(preview.target_path.parent))}")
+    typer.echo(f"filename: {clean_text(preview.filename)}")
+    typer.echo(f"destination: {clean_text(str(preview.target_path))}")
 
 
 def _ask(workspace: Workspace, question: review.ReviewQuestion, *, yes: bool) -> None:
@@ -164,6 +252,9 @@ def _ask(workspace: Workspace, question: review.ReviewQuestion, *, yes: bool) ->
             workflow.resolve_label(workspace, question.review_id, fields=fields)
             typer.echo("recorded one-off labels")
         return
+    if question.kind == "unmatched_placement":
+        _ask_destination(workspace, question, yes=yes)
+        return
     if question.kind == "naming_field_missing":
         template = typer.prompt("Template without the missing field", default="")
         if template.strip():
@@ -173,6 +264,40 @@ def _ask(workspace: Workspace, question: review.ReviewQuestion, *, yes: bool) ->
     if typer.confirm("Dismiss this question?", default=False):
         workflow.dismiss_review(workspace, question.review_id, note="interactive_dismiss")
         typer.echo("dismissed")
+
+
+def _ask_destination(workspace: Workspace, question: review.ReviewQuestion, *, yes: bool) -> None:
+    """Interactively choose and confirm an explicit target root and folder."""
+    try:
+        targets = workflow.placement_targets(workspace, question.review_id)
+    except CoreError as exc:
+        typer.echo(f"left open: {exc}")
+        return
+    if not targets:
+        typer.echo("No allowed target root is configured for this source root.")
+        return
+    for target in targets:
+        typer.echo(
+            f"  target {target.root_id} alias={target.alias or '-'} "
+            f"role={target.role} path={clean_text(str(target.canonical_path))}"
+        )
+    choice = typer.prompt("Target root id", default=targets[0].root_id).strip()
+    if all(target.root_id != choice for target in targets):
+        typer.echo("Unknown target root id; left open.")
+        return
+    folder = typer.prompt("Target folder relative to the root", default="").strip()
+    name = typer.prompt("Filename (empty keeps the source name)", default="").strip()
+    try:
+        _resolve_destination(
+            workspace,
+            question.review_id,
+            target_root_id=choice,
+            target_folder=folder,
+            name=name or None,
+            yes=yes,
+        )
+    except CoreError as exc:
+        typer.echo(f"left open: {exc}")
 
 
 def _prompt_fields() -> dict[str, str]:

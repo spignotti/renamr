@@ -75,9 +75,23 @@ _COST_LABELS = (
 )
 _CANCEL_LABELS = ("kuendigungsbestaetigung", "kündigungsbestätigung", "cancellation confirmation")
 _AMENDMENT_LABELS = ("nachtrag", "amendment")
+_REFERENCE_LABELS = (
+    "vertragsnummer",
+    "vertragsnr",
+    "contract number",
+    "contract no",
+    "contract no.",
+    "referenznummer",
+    "reference number",
+    "police number",
+    "versicherungsnummer",
+    "kundennummer",
+    "customer number",
+)
 _AMOUNT = re.compile(r"(\d{1,3}(?:[.\s]\d{3})*(?:,\d{2})|\d+(?:\.\d{2})?)\s*(EUR|GBP|USD|CHF)")
 _DURATION = re.compile(r"(\d+)\s*(monat|monate|months?|jahr|jahre|years?)")
 _DEADLINE = re.compile(r"(\d+)\s*(tag|tage|days?|woche|wochen|weeks?)")
+_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9./_-]{2,39}")
 
 
 class ExtractedField(BaseModel):
@@ -92,6 +106,16 @@ class ExtractedField(BaseModel):
     origin: str = "explicit"
 
 
+class ExtractedReference(BaseModel):
+    """One private, source-grounded contract/reference number."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: str
+    page: int
+    quote: str
+
+
 class ContractDocumentFacts(BaseModel):
     """All parsed fields and relationship metadata for one document."""
 
@@ -103,6 +127,7 @@ class ContractDocumentFacts(BaseModel):
     effective_date: date | None = None
     complete: bool = True
     fields: list[ExtractedField] = []
+    references: list[ExtractedReference] = []
 
 
 def parse_contract_document(
@@ -114,8 +139,10 @@ def parse_contract_document(
     """Parse one document from (page number, text) pairs without inference."""
     kind = _kind(pages)
     fields: list[ExtractedField] = []
+    references: list[ExtractedReference] = []
     if complete:
         fields.extend(_explicit_fields(pages))
+        references = _explicit_references(pages)
         _add_contract_type(fields, kind, pages)
         _add_calculated(fields)
     issue = _labeled_date(pages, _ISSUE_LABELS)
@@ -127,6 +154,7 @@ def parse_contract_document(
         effective_date=effective,
         complete=complete,
         fields=fields,
+        references=references,
     )
 
 
@@ -189,6 +217,33 @@ def _add_contract_type(
             quote=quote[:300],
         )
     )
+
+
+def _explicit_references(pages: list[tuple[int, str]]) -> list[ExtractedReference]:
+    """Return unique labeled reference numbers grounded in the chain text."""
+    found: dict[str, ExtractedReference] = {}
+    for page, text in pages:
+        for line in text.splitlines():
+            stripped = line.strip()
+            lowered = stripped.lower()
+            for label in _REFERENCE_LABELS:
+                index = lowered.find(label)
+                if index < 0:
+                    continue
+                match = _REFERENCE.search(stripped[index + len(label) :].lstrip(" :=—-"))
+                if match is None:
+                    continue
+                value = match.group(0).rstrip(".,;")
+                key = reference_key(value)
+                if key and key not in found:
+                    found[key] = ExtractedReference(value=value, page=page, quote=stripped[:300])
+                break
+    return list(found.values())
+
+
+def reference_key(value: str) -> str:
+    """Return the normalized comparison key for a private reference value."""
+    return " ".join(value.casefold().split())
 
 
 def _labeled_text(pages: list[tuple[int, str]], labels: tuple[str, ...]) -> ExtractedField | None:

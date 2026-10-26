@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DATABASE_APPLICATION_ID = 0x524E4D52
 
 
@@ -376,7 +376,41 @@ _MIGRATION_2 = (
     """,
 )
 
+_MIGRATION_3 = (
+    """
+    CREATE TABLE contract_scopes (
+        root_id TEXT PRIMARY KEY,
+        base_path TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (root_id) REFERENCES roots (root_id) ON DELETE CASCADE
+    )
+    """,
+    "ALTER TABLE contract_members ADD COLUMN member_id TEXT",
+    "ALTER TABLE contract_members ADD COLUMN dev INTEGER",
+    "ALTER TABLE contract_members ADD COLUMN ino INTEGER",
+    """
+    CREATE TABLE contract_references (
+        reference_id TEXT PRIMARY KEY,
+        contract_id TEXT NOT NULL,
+        value TEXT NOT NULL,
+        value_key TEXT NOT NULL,
+        source_revision_id TEXT NOT NULL,
+        source_page INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (contract_id, value_key),
+        FOREIGN KEY (contract_id) REFERENCES contracts (contract_id) ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE INDEX idx_contract_references_key ON contract_references (value_key)
+    """,
+    """
+    CREATE INDEX idx_contract_members_identity ON contract_members (dev, ino)
+    """,
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(version=1, statements=_MIGRATION_1),
     Migration(version=2, statements=_MIGRATION_2),
+    Migration(version=3, statements=_MIGRATION_3),
 )

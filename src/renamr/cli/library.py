@@ -62,12 +62,21 @@ def document_show(
 def document_export(
     revision_id: str,
     to: Annotated[Path, typer.Option("--to", help="Explicit private UTF-8 text destination.")],
+    overwrite: Annotated[
+        bool, typer.Option("--overwrite", help="Replace an existing non-source destination.")
+    ] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Confirm the overwrite.")] = False,
     config: ConfigOption = None,
     state_dir: StateOption = None,
 ) -> None:
     """Export complete stored page text; original bytes are never rewritten."""
     workspace = open_workspace(config, state_dir)
-    destination = workflow.export_text(workspace, revision_id, to)
+    if overwrite and not confirm(
+        f"Overwrite existing export destination {to}?", yes=yes, input_text="yes" if yes else None
+    ):
+        typer.echo("Export left unapplied.")
+        return
+    destination = workflow.export_text(workspace, revision_id, to, overwrite=overwrite)
     typer.echo(f"Exported private text to {destination} (local handling applies).")
 
 

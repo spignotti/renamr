@@ -12,9 +12,9 @@ facts, rules, decisions, contracts, reviews, journals, and MCP grants.
 | Workspace/storage | `core/workspace.py`, `core/db.py`, `core/schema.py`, `core/paths.py`, `core/lock.py`, `core/catalog.py` |
 | Extraction and inference | `core/extract.py`, `core/extract_runner.py`, `core/inference.py`, `local_client.py`, `local_transport.py`, `ollama.py`, `core/process.py` |
 | Pages, facts, search | `core/processing.py`, `core/features.py`, `core/facts.py`, `core/search.py` |
-| Routing, learning, review | `core/rules.py`, `core/learning.py`, `core/examples.py`, `core/review.py`, `core/folders.py` |
-| Dialog/structure | `core/dialog.py`, `core/structure.py` |
-| Contracts | `core/contract_fields.py`, `core/contract_types.py`, `core/contract_aggregate.py`, `core/contracts.py` |
+| Routing, learning, review | `core/rules.py`, `core/learning.py`, `core/examples.py`, `core/onboarding.py`, `core/placement.py`, `core/review.py`, `core/folders.py` |
+| Dialog/structure | `core/dialog.py`, `core/dialog_context.py`, `core/dialog_state.py`, `core/dialog_render.py`, `core/structure.py` |
+| Contracts | `core/contract_fields.py`, `core/contract_types.py`, `core/contract_aggregate.py`, `core/contracts.py`, `core/contract_identity.py` |
 | Mutation and history | `core/mutation.py`, `core/operations.py`, `core/publication.py`, `core/history.py`, `core/journal.py`, `core/xattr.py`, `core/fsmeta.py` |
 | Service | `core/scheduler.py`, `core/budget.py`, `service_worker.py` |
 | MCP | `core/mcp_gateway.py`, `mcp_server.py` |
@@ -43,11 +43,27 @@ with method, rotation, confidence, quality, and incompleteness.
   routed files. Canonical paths, symlink boundaries, and state overlap are
   validated before registration and again at mutation time.
 - Originals are never rewritten. Compression and in-place PDF rewriting are not
-  supported. Text export is a separate `0600` file.
+  supported. Text export is a separate `0600` file, refuses an occupied
+  destination unless explicitly confirmed, and never rewrites a registered
+  source original.
 - A preview is the default. Files change only through `run --apply`, an explicit
   structure apply, undo, or a service tick with automation enabled.
 - An uncertain document stays in place with a review item. Missing naming values
-  never become an automatic `Unknown` filename.
+  never become an automatic `Unknown` filename. A readable document with no
+  matching rule produces one deduplicated destination question.
+- Routine classification uses the `small` model role. Rule/structure dialog uses
+  `maintenance`; `main` is retained for explicit benchmark runs. Feature cache
+  keys include the role's actual model and installed digest.
+- Dialog proposals fingerprint settings, rules, roots, targets, folder policy,
+  structure plans, and selected-root locations, revisions, and facts. Applying a
+  stale label or structure proposal fails. Pending routes re-run deterministic
+  rule selection at mutation time, so a new higher-priority rule or changed facts
+  invalidate the plan.
+- Contract groups accept a validated root-relative base path. Stable contract ids
+  follow member folders/files through approved structure plans and confirmed
+  manual moves. Grounded private references attach `entity_id` only when they
+  resolve to one contract; shared references stay ambiguous and private values
+  never enter MCP output or diagnostics.
 - Every writer takes the same `fcntl.flock` on the state lock file. The lock file
   is never unlinked or recreated while it may be held. MCP never writes.
 - File operations move through planned → staged → published → source retired →

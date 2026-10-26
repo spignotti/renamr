@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from renamr.core import catalog, contract_aggregate, folders, roots
+from renamr.core import catalog, contract_aggregate, contract_identity, folders, roots
 from renamr.core.catalog import QualityState
 from renamr.core.contract_fields import (
     CONTRACT_FIELDS,
@@ -38,9 +38,10 @@ from renamr.core.ids import new_id
 from renamr.core.sanitize import is_safe_alias, is_safe_label, safe_alias
 
 
-def preview_groups(db: Database, root_id: str) -> list[GroupEntry]:
-    """Return the explicit child-folder convention without creating anything."""
+def preview_groups(db: Database, root_id: str, *, base_path: str | None = None) -> list[GroupEntry]:
+    """Return the explicit folder convention under a root-relative base path."""
     root = roots.get_root(db, root_id)
+    base = contract_identity.scope_base(db, root.root_id, base_path)
     existing = _members_by_path(db, root.root_id)
     aliases = {item.contract_id: item.alias for item in list_contracts(db)}
     return [
@@ -49,11 +50,17 @@ def preview_groups(db: Database, root_id: str) -> list[GroupEntry]:
             contract_id=existing.get(folder),
             alias=aliases.get(existing.get(folder, ""), ""),
         )
-        for folder in folders.discover_folders(root)
+        for folder in folders.discover_folders(root, relative_path=base)
     ]
 
 
-def configure_contracts(db: Database, root_id: str, *, confirmed: bool) -> list[ContractRecord]:
+def configure_contracts(
+    db: Database,
+    root_id: str,
+    *,
+    confirmed: bool,
+    base_path: str | None = None,
+) -> list[ContractRecord]:
     """Confirm the each-child-folder convention and create stable contract ids.
 
     Raises:
@@ -63,49 +70,103 @@ def configure_contracts(db: Database, root_id: str, *, confirmed: bool) -> list[
     if not confirmed:
         raise CoreError("contract grouping requires explicit confirmation")
     root = roots.get_root(db, root_id)
+    base = contract_identity.scope_base(db, root.root_id, base_path)
+    roots.resolve_subpath(root, base)
+    contract_identity.store_scope(db, root.root_id, base)
     existing = _members_by_path(db, root.root_id)
-    for folder in folders.discover_folders(root):
+    for folder in folders.discover_folders(root, relative_path=base):
         if folder in existing:
+            contract_identity.ensure_member_identity(db, root, folder)
             continue
         contract_id = new_id("ctr")
-        alias = _unique_alias(db, safe_alias(folder))
+        alias = _unique_alias(db, safe_alias(folder.rsplit("/", 1)[-1]))
         now = datetime.now(UTC).isoformat()
         with db.transaction() as connection:
             connection.execute(
                 "INSERT INTO contracts (contract_id, alias, description, state, created_at) "
                 "VALUES (?, ?, ?, 'configured', ?)",
-                (contract_id, alias, folder, now),
+                (contract_id, alias, folder.rsplit("/", 1)[-1], now),
             )
             connection.execute(
-                "INSERT INTO contract_members (contract_id, root_id, relative_path, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (contract_id, root.root_id, folder, now),
+                "INSERT INTO contract_members (contract_id, root_id, relative_path, member_id, "
+                "dev, ino, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    contract_id,
+                    root.root_id,
+                    folder,
+                    new_id("member"),
+                    *contract_identity.member_identity(root, folder),
+                    now,
+                ),
             )
     return [item for item in list_contracts(db) if _in_root(item, root.root_id)]
+
+
+def create_contract(
+    db: Database,
+    *,
+    root_id: str,
+    relative_path: str,
+    alias: str = "",
+    description: str = "",
+) -> ContractRecord:
+    """Create one explicit contract group (manual exception) and its membership."""
+    root = roots.get_root(db, root_id)
+    relative = folders.validate_relative_path(relative_path)
+    if not relative:
+        raise RootError("a manual contract group must name a folder or file")
+    roots.resolve_subpath(root, relative)
+    contract_identity.require_unclaimed_path(db, root_id, relative)
+    cleaned = safe_alias(alias or relative.rsplit("/", 1)[-1])
+    if not cleaned or not is_safe_alias(cleaned):
+        raise CoreError("contract alias is not safe")
+    now = datetime.now(UTC).isoformat()
+    contract_id = new_id("ctr")
+    with db.transaction() as connection:
+        connection.execute(
+            "INSERT INTO contracts (contract_id, alias, description, state, created_at) "
+            "VALUES (?, ?, ?, 'configured', ?)",
+            (contract_id, _unique_alias(db, cleaned), description, now),
+        )
+        connection.execute(
+            "INSERT INTO contract_members (contract_id, root_id, relative_path, member_id, "
+            "dev, ino, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                contract_id,
+                root_id,
+                relative,
+                new_id("member"),
+                *contract_identity.member_identity(root, relative),
+                now,
+            ),
+        )
+    return get_contract(db, contract_id)
 
 
 def assign_member(
     db: Database, contract_id: str, *, root_id: str, relative_path: str
 ) -> ContractMember:
     """Add an explicit manual membership (exception) for a contract."""
-    roots.get_root(db, root_id)
+    root = roots.get_root(db, root_id)
     _require_contract(db, contract_id)
     relative = folders.validate_relative_path(relative_path)
     if not relative:
         raise RootError("manual membership must name a folder or file")
-    with db.read() as connection:
-        clash = connection.execute(
-            "SELECT contract_id FROM contract_members WHERE root_id = ? AND relative_path = ?",
-            (root_id, relative),
-        ).fetchone()
-    if clash is not None and str(clash["contract_id"]) != contract_id:
-        raise CoreError("path already belongs to another contract")
+    contract_identity.require_unclaimed_path(db, root_id, relative, contract_id=contract_id)
     now = datetime.now(UTC).isoformat()
     with db.transaction() as connection:
         connection.execute(
-            "INSERT INTO contract_members (contract_id, root_id, relative_path, created_at) "
-            "VALUES (?, ?, ?, ?) ON CONFLICT (contract_id, root_id, relative_path) DO NOTHING",
-            (contract_id, root_id, relative, now),
+            "INSERT INTO contract_members (contract_id, root_id, relative_path, member_id, "
+            "dev, ino, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (contract_id, root_id, relative_path) DO NOTHING",
+            (
+                contract_id,
+                root_id,
+                relative,
+                new_id("member"),
+                *contract_identity.member_identity(root, relative),
+                now,
+            ),
         )
     return ContractMember(root_id=root_id, relative_path=relative)
 
@@ -166,6 +227,7 @@ def refresh_contracts(
     db: Database, *, root_id: str | None = None, contract_ids: list[str] | None = None
 ) -> ContractRefreshResult:
     """Read complete page text and rewrite each contract's evidence-backed facts."""
+    contract_identity.reconcile_members(db)
     selected = list_contracts(db)
     if contract_ids is not None:
         selected = [item for item in selected if item.contract_id in contract_ids]
@@ -179,11 +241,14 @@ def refresh_contracts(
         result.incomplete_documents += outcome.incomplete_documents
         result.conflicts += outcome.conflicts
         result.skipped += outcome.skipped
+        result.references += outcome.references
+    bridged = contract_identity.bridge_entities(db)
+    result.entities = bridged.entities
     return result
 
 
 def _refresh_one(db: Database, contract: ContractRecord) -> ContractRefreshResult:
-    """Refresh one contract and persist its facts."""
+    """Refresh one contract and persist its facts and grounded references."""
     documents: list[ContractDocumentFacts] = []
     result = ContractRefreshResult(contracts=1)
     for member in contract.members:
@@ -201,6 +266,7 @@ def _refresh_one(db: Database, contract: ContractRecord) -> ContractRefreshResul
                     detail=revision_id,
                     revision_id=revision_id,
                 )
+    result.references = contract_identity.replace_references(db, contract.contract_id, documents)
     if not documents:
         result.skipped += 1
         user_facts = contract_aggregate.user_facts(db, contract.contract_id)
@@ -229,6 +295,23 @@ def _refresh_one(db: Database, contract: ContractRecord) -> ContractRefreshResul
 def get_contract_facts(db: Database, contract_id: str) -> list[ContractFactRecord]:
     """Return all facts for one contract ordered by field."""
     return contract_aggregate.get_contract_facts(db, contract_id)
+
+
+def reconcile_members(db: Database) -> int:
+    """Update member identities after confirmed folder or file moves."""
+    return contract_identity.reconcile_members(db)
+
+
+def remap_members(db: Database, root_id: str, mappings: list[tuple[str, str]]) -> int:
+    """Remap contract members after an approved structure plan."""
+    return contract_identity.remap_members(db, root_id, mappings)
+
+
+def remap_moved_path(db: Database, *, old_path: Path, new_path: Path, target_root_id: str) -> int:
+    """Keep a stable membership when a manual member file moves."""
+    return contract_identity.remap_moved_path(
+        db, old_path=old_path, new_path=new_path, target_root_id=target_root_id
+    )
 
 
 def set_user_fact(db: Database, contract_id: str, field: str, value: str) -> ContractFactRecord:

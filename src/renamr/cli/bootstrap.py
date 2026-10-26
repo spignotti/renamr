@@ -57,7 +57,7 @@ def init_command(
     if chosen is not None and chosen.exists():
         _existing_bootstrap(chosen)
         return
-    state = resolve_state_dir(config, state_dir)
+    state = resolve_state_dir(config, state_dir, allow_missing_config=True)
     workspace = Workspace.open(state_dir=state)
     if chosen is not None:
         paths.write_bootstrap(chosen, state)
@@ -205,7 +205,7 @@ def _init_from_legacy(
     chosen = _bootstrap_path(config)
     if chosen is not None and chosen.exists():
         raise CliError(f"{chosen} already exists; choose a new --config path")
-    state = resolve_state_dir(config, state_dir)
+    state = resolve_state_dir(config, state_dir, allow_missing_config=True)
     preview = preview_legacy_migration(legacy, state_dir=state)
     typer.echo(json.dumps(preview.model_dump(mode="json"), indent=2, default=str))
     if preview.blocked:

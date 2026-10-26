@@ -141,6 +141,7 @@ def routing_guard(ws: Workspace, run: dict[str, object]) -> RunGuard:
 
     def guard(item: RunItem) -> None:
         _check_rule(ws, item)
+        _check_planned_route(ws, source_root_id, item)
         _require_registered(ws, item.source_path, what="source")
         target = item.target_path
         if target is None:
@@ -177,6 +178,33 @@ def _check_rule(ws: Workspace, item: RunItem) -> None:
         raise PreconditionError("rule_missing") from None
     if current.status is not rules.RuleStatus.ACTIVE or current.revision != item.rule_revision:
         raise PreconditionError("rule_revision_stale")
+
+
+def _check_planned_route(ws: Workspace, source_root_id: str | None, item: RunItem) -> None:
+    """Block a pending route that current facts or rules no longer select.
+
+    Recomputes deterministic rule selection at mutation time. A newly added
+    higher-priority rule, changed facts, or a different destination invalidates
+    the plan even when the originally selected rule revision is unchanged.
+    """
+    if source_root_id is None or not item.rule_id or item.revision_id is None:
+        return
+    root = roots.get_root(ws.db, source_root_id)
+    facts = _facts_for_routing(catalog.get_facts(ws.db, item.revision_id))
+    decision = rules.select_rule(
+        rules.active_rules(ws.db),
+        scope_root_id=source_root_id,
+        relative_path=_relative(item.source_path, root.canonical_path),
+        facts=facts,
+    )
+    if decision.state != "routed" or decision.target_root_id is None:
+        raise PreconditionError("routing_plan_stale")
+    if decision.rule_id != item.rule_id or decision.rule_revision != item.rule_revision:
+        raise PreconditionError("routing_plan_stale")
+    target_root = roots.get_root(ws.db, decision.target_root_id)
+    expected_dir = roots.resolve_subpath(target_root, decision.target_subdir)
+    if item.target_path is None or item.target_path.parent != expected_dir:
+        raise PreconditionError("routing_plan_stale")
 
 
 def _plan_location(
@@ -221,9 +249,30 @@ def _plan_location(
             location_id=location.location_id,
         )
         return
+    if decision.state == "no_match":
+        _record_unmatched(ws, root, location, revision)
+        return
     if decision.state != "routed" or decision.target_root_id is None:
         return
     _plan_routed(ws, root, location, revision, decision, features, run_id)
+
+
+def _record_unmatched(
+    ws: Workspace,
+    root: Root,
+    location: catalog.LocationRecord,
+    revision: catalog.RevisionRecord,
+) -> None:
+    """Ask for an explicit destination when no active rule routes a readable file."""
+    relative = _relative(location.canonical_path, root.canonical_path)
+    detail = f"{location.canonical_path.name}|{relative}"
+    catalog.record_review(
+        ws.db,
+        kind="unmatched_placement",
+        detail=detail,
+        revision_id=revision.revision_id,
+        location_id=location.location_id,
+    )
 
 
 def _decide(

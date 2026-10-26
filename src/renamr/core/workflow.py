@@ -17,6 +17,8 @@ from renamr.core import (
     examples,
     folders,
     learning,
+    onboarding,
+    placement,
     processing,
     reconcile,
     review,
@@ -115,9 +117,11 @@ def search(ws: Workspace, query: str, *, limit: int = DEFAULT_LIMIT) -> list[Sea
     return _search(ws.db, query, limit=limit)
 
 
-def export_text(ws: Workspace, revision_id: str, destination: Path) -> Path:
-    """Export a revision's text to an explicit private file."""
-    return _export_text(ws.db, revision_id, destination)
+def export_text(
+    ws: Workspace, revision_id: str, destination: Path, *, overwrite: bool = False
+) -> Path:
+    """Export a revision's text to an explicit private file without clobbering."""
+    return _export_text(ws.db, revision_id, destination, overwrite=overwrite)
 
 
 def review_items(ws: Workspace) -> list[dict[str, object]]:
@@ -249,6 +253,55 @@ def observe_manual_moves(ws: Workspace) -> list[examples.ManualMoveObservation]:
         return examples.observe_manual_moves(ws.db)
 
 
+def preview_placement(
+    ws: Workspace,
+    review_id: str,
+    *,
+    target_root_id: str,
+    target_subdir: str = "",
+    filename: str | None = None,
+) -> placement.PlacementPreview:
+    """Preview one explicit destination choice without changing anything."""
+    return placement.preview_placement(
+        ws.db,
+        review_id,
+        target_root_id=target_root_id,
+        target_subdir=target_subdir,
+        filename=filename,
+    )
+
+
+def placement_targets(ws: Workspace, review_id: str) -> list[Root]:
+    """Return allowed target roots for one reviewed document."""
+    return placement.placement_targets(ws.db, review_id)
+
+
+def apply_placement(
+    ws: Workspace,
+    review_id: str,
+    *,
+    target_root_id: str,
+    target_subdir: str = "",
+    filename: str | None = None,
+) -> placement.PlacementResult:
+    """Apply one confirmed destination move through the journal."""
+    return placement.apply_placement(
+        ws,
+        review_id,
+        target_root_id=target_root_id,
+        target_subdir=target_subdir,
+        filename=filename,
+    )
+
+
+def seed_trusted_examples(
+    ws: Workspace, root_ids: list[str] | None = None
+) -> onboarding.TrustedSeedResult:
+    """Seed auditable placement examples from trusted scopes under the lock."""
+    with ws.lock():
+        return onboarding.seed_trusted_examples(ws.db, root_ids=root_ids)
+
+
 def resolve_label(ws: Workspace, review_id: str, *, fields: dict[str, str]) -> examples.Example:
     """Store a one-off confirmed label under the writer lock."""
     with ws.lock():
@@ -322,6 +375,7 @@ def propose_dialog(
     root_ids: list[str],
     output_mode: OutputMode = "validated_prompt",
     keep_alive: str | None = None,
+    history: list[str] | None = None,
 ) -> dialog.DialogProposal:
     """Ask for and persist a bounded local proposal under the writer lock."""
     with ws.lock():
@@ -333,6 +387,7 @@ def propose_dialog(
             root_ids=root_ids,
             output_mode=output_mode,
             keep_alive=keep_alive,
+            history=history,
         )
 
 
@@ -345,11 +400,32 @@ def apply_dialog(
 
 
 def configure_contracts(
-    ws: Workspace, root_id: str, *, confirmed: bool
+    ws: Workspace, root_id: str, *, confirmed: bool, base_path: str | None = None
 ) -> list[contracts.ContractRecord]:
-    """Confirm the child-folder contract convention under the writer lock."""
+    """Confirm the folder contract convention under the writer lock."""
     with ws.lock():
-        return contracts.configure_contracts(ws.db, root_id, confirmed=confirmed)
+        return contracts.configure_contracts(
+            ws.db, root_id, confirmed=confirmed, base_path=base_path
+        )
+
+
+def create_contract(
+    ws: Workspace,
+    *,
+    root_id: str,
+    relative_path: str,
+    alias: str = "",
+    description: str = "",
+) -> contracts.ContractRecord:
+    """Create one explicit manual contract group under the writer lock."""
+    with ws.lock():
+        return contracts.create_contract(
+            ws.db,
+            root_id=root_id,
+            relative_path=relative_path,
+            alias=alias,
+            description=description,
+        )
 
 
 def assign_contract_member(

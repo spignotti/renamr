@@ -139,12 +139,17 @@ def _scan_keys(
     feature_key = None
     if extractor is not None:
         feature_key = processing.feature_cache_key(
-            settings.model_roles.main,
+            _routine_model(settings),
             settings.output_mode,
             model_digest=model_digest,
             budget_signature=str(settings.feature_max_chars),
         )
     return _ScanKeys(extract=extract_key, feature=feature_key)
+
+
+def _routine_model(settings: Settings) -> str:
+    """Return the configured routine classification model (small role)."""
+    return settings.model_roles.small
 
 
 def _scan_candidates(
@@ -441,7 +446,15 @@ def _reconcile_missing(
         if _active_own_operation(db, canonical):
             continue
         revision = catalog.get_revision(db, location.revision_id)
-        kind = "possible_move" if new_hashes.get(revision.content_hash) else "path_missing"
+        moved_elsewhere = any(
+            item.location_id != location.location_id and item.presence is Presence.PRESENT
+            for item in catalog.locations_for_revision(db, revision.revision_id)
+        )
+        kind = (
+            "possible_move"
+            if new_hashes.get(revision.content_hash) or moved_elsewhere
+            else "path_missing"
+        )
         catalog.record_review(
             db,
             kind=kind,

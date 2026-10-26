@@ -16,12 +16,18 @@ contracts_app = typer.Typer(help="Group contracts by folder and inspect source-b
 
 @contracts_app.command("preview")
 def preview_command(
-    root_id: str, config: ConfigOption = None, state_dir: StateOption = None
+    root_id: str,
+    base_path: Annotated[
+        str | None,
+        typer.Option("--base-path", help="Root-relative folder whose children are contracts."),
+    ] = None,
+    config: ConfigOption = None,
+    state_dir: StateOption = None,
 ) -> None:
     """Show the each-child-folder convention before confirming it."""
     workspace = open_workspace(config, state_dir)
-    entries = contracts.preview_groups(workspace.db, root_id)
-    typer.echo("convention: each immediate child folder is one contract")
+    entries = contracts.preview_groups(workspace.db, root_id, base_path=base_path)
+    typer.echo("convention: each child folder below the base path is one contract")
     for entry in entries:
         typer.echo(
             f"folder={clean_text(entry.relative_path, limit=80)} "
@@ -34,6 +40,10 @@ def preview_command(
 @contracts_app.command("configure")
 def configure_command(
     root_id: str,
+    base_path: Annotated[
+        str | None,
+        typer.Option("--base-path", help="Root-relative folder whose children are contracts."),
+    ] = None,
     yes: Annotated[
         bool, typer.Option("--yes", "-y", help="Confirm the displayed convention.")
     ] = False,
@@ -42,14 +52,38 @@ def configure_command(
 ) -> None:
     """Confirm group membership once and assign stable contract ids."""
     workspace = open_workspace(config, state_dir)
-    entries = contracts.preview_groups(workspace.db, root_id)
+    entries = contracts.preview_groups(workspace.db, root_id, base_path=base_path)
     for entry in entries:
         typer.echo(f"{clean_text(entry.relative_path, limit=80)} -> {entry.contract_id or 'new'}")
     if not confirm("Confirm each child folder as one contract?", yes=yes):
         typer.echo("Contract grouping left unconfigured.")
         return
-    created = workflow.configure_contracts(workspace, root_id, confirmed=True)
+    created = workflow.configure_contracts(workspace, root_id, confirmed=True, base_path=base_path)
     typer.echo(f"configured {len(created)} contract group(s) in root {root_id}")
+
+
+@contracts_app.command("create")
+def create_command(
+    root_id: Annotated[str, typer.Option("--root")],
+    path: Annotated[str, typer.Option("--path", help="Root-relative folder or file.")],
+    alias: Annotated[str, typer.Option("--alias")] = "",
+    description: Annotated[str, typer.Option("--description")] = "",
+    config: ConfigOption = None,
+    state_dir: StateOption = None,
+) -> None:
+    """Create one explicit contract group as a manual exception."""
+    workspace = open_workspace(config, state_dir)
+    contract = workflow.create_contract(
+        workspace,
+        root_id=root_id,
+        relative_path=path,
+        alias=alias,
+        description=description,
+    )
+    typer.echo(
+        f"{contract.contract_id} alias={contract.alias or '-'} "
+        f"members={','.join(item.relative_path for item in contract.members)}"
+    )
 
 
 @contracts_app.command("list")

@@ -19,6 +19,10 @@ The old default `config.toml` is detected and left untouched. If it remains at t
 default path, it is ignored for bootstrap resolution and the platform default
 state directory is used. Use a separate new bootstrap path as above for clarity.
 
+An explicit `--config` path that does not exist fails closed instead of falling
+back to the default state. Creating a new bootstrap with `init --config NEW`
+remains supported.
+
 ## What imports
 
 - Existing inbox paths that still exist, as `inbox` roots.
@@ -32,15 +36,21 @@ The legacy vision role is folded into the main role with a non-blocking notice.
 - Cloud or remote model references, with a message naming the setting.
 - Non-loopback `api_base`.
 - Enabled PDF compression, because v2 preserves original bytes.
+- Unsupported legacy `filename_template` values that use anything except
+  `{date}`, `{sender}`, `{subject}`, and `{document_type}`.
 - False compression settings are ignored with a notice.
 
-A blocked preview imports nothing.
+A blocked preview imports nothing. Preview validates the entire merged settings
+payload before any root, catalog, or bootstrap write, so an invalid legacy value
+cannot leave a state that fails on every later command.
 
 ## Library and archive
 
 v1 only knew inbox paths. Register additional library/archive roots with
-`renamr onboard` before enabling routing. Allowed targets default to library and
-archive roots selected in the same onboarding call.
+`renamr onboard` before enabling routing. Onboarding classifies only the scopes
+selected in that call with the local `small` role, extends only those inboxes'
+targets, and seeds conservative placement examples from trusted library/archive
+folders. It does not scan or rewire unrelated registered roots.
 
 ## Legacy undo
 

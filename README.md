@@ -52,7 +52,8 @@ ollama serve                   # or let renamr start an owned server for real wo
 # Create the private state directory and v2 bootstrap.
 renamr init
 
-# Register selected existing roots and catalog them without changing documents.
+# Register selected existing roots, classify them, and catalog without changing documents.
+# Library/archive folders are trusted examples by default; --unsorted opts a root out.
 renamr onboard --inbox ~/Documents/inbox \
   --library ~/Documents/areas --archive ~/Documents/archive \
   --describe "$HOME/Documents/areas=Reference material"
@@ -60,27 +61,36 @@ renamr onboard --inbox ~/Documents/inbox \
 # Preview routing. This is the default; no document is moved.
 renamr run
 
+# Choose an explicit target root and folder for a readable document with no rule.
+renamr review
+
 # Apply the displayed, journaled plan.
 renamr run --apply
-
-# Inspect and resolve pending questions.
-renamr review
 
 # Reverse the latest committed run through the journal.
 renamr undo --preview
 renamr undo --yes
 ```
 
+`onboard` classifies only the scopes selected in that call with the verified
+local `small` role. It never scans every previously registered root, and it only
+extends the allowed targets of the inbox roots selected in that call. Trusted
+library/archive folders seed conservative placement examples for those inboxes;
+they never activate a rule.
+
 The `--inbox` override must name a registered root; it never expands read scope.
 
 ## Local model and page extraction
 
 Defaults use the installed `gemma4:e4b` for the `main`, `small`, and
-`maintenance` roles. Roles and keep-alive are database settings:
+`maintenance` roles. Routine classification uses `small`; rule/structure dialog
+uses `maintenance`; `main` remains a legacy alias for explicit benchmark runs.
+Roles and keep-alive are database settings:
 
 ```bash
 renamr config set model.main gemma4:e4b
 renamr config set model.small gemma4:e4b
+renamr config set model.maintenance gemma4:e4b
 renamr config set keep_alive.main 5m
 renamr config set output_mode validated_prompt
 ```
@@ -96,14 +106,14 @@ is reported before processing; there is no silent fallback and no download.
 | `init` | Create private state/bootstrap, or preview/apply an explicit v1 TOML import. |
 | `config show`, `config set`, `config root`, `config folder` | Typed database settings, root descriptions, folder overrides. |
 | `doctor [--redact]` | Integrity, roots, OCR assets, model availability, backlog. |
-| `onboard` | Register sibling roots, descriptions, trusted/unsorted status, catalog. |
+| `onboard` | Register selected roots, classify them locally, seed trusted placement examples. |
 | `run [--apply]` | Preview by default; apply only with `--apply`. |
-| `review` | Focused questions, one-off labels, manual-move confirmation. |
+| `review` | Focused questions, one-off labels, manual-move confirmation, explicit destination choice (`--destination-root`/`--destination-folder`). |
 | `rules list/suggest/test/activate/revise/disable/rollback/history/maintain` | Bounded rule lifecycle. |
-| `chat` | Five schema-bound local intents; proposals require terminal confirmation. |
+| `chat` | Five schema-bound local intents; validated payloads are rendered before terminal confirmation. |
 | `structure propose/show/list/apply` | Explicit folder/rule plans; no deletion of old folders. |
-| `search`, `document show/export` | Local full-text search, evidence, explicit text export. |
-| `contracts preview/configure/refresh/show/alias/assign/fact` | Source-backed contract grouping and facts. |
+| `search`, `document show/export` | Local full-text search, evidence, explicit no-clobber text export. |
+| `contracts preview/configure/create/refresh/show/alias/assign/fact` | Source-backed contract grouping, nested base paths, and facts. |
 | `service render/install/status/remove/pause/resume/tick` | Bounded LaunchAgent reconciliation. |
 | `mcp serve`, `permissions grant/revoke/list` | Read-only stdio sharing with enumerated grants. |
 | `benchmark [--live]`, `version` | Explicit local acceptance corpus and package version. |
@@ -122,11 +132,22 @@ generated code is accepted.
 
 A confirmed one-off label is stored as an example, not as a rule. A unique
 manual move can become an example only when bytes and identity correlate; copied,
-ambiguous, offline, or app-generated moves never become training data. `rules
-suggest` is deterministic from confirmed destination examples, `rules test` shows
-affected/positive/negative/conflict counts, and activation is a separate command.
-A missing required naming value stays in review; renamr never silently files an
-`Unknown` name.
+ambiguous, offline, or app-generated moves never become training data. An
+explicit destination choice is journaled, keeps the existing filename unless a
+validated name is supplied, and records a separate example. `rules suggest` is
+deterministic from confirmed destination examples, `rules test` compares the
+actual scope and destination (different folders in the same root are conflicts),
+and activation is a separate command. A missing required naming value stays in
+review; renamr never silently files an `Unknown` name. A readable document with
+no matching rule produces one deduplicated destination question and stays in
+place.
+
+Contract groups can use a validated root-relative base path (for example
+`Personal/Contracts`) so nested PARA layouts work. Contract ids stay stable when
+an approved structure plan or a confirmed manual move relocates a member.
+Grounded private contract/reference numbers can attach a stable `entity_id` to a
+document only when they resolve to one contract; shared references remain
+ambiguous. Reference values never enter MCP exports or diagnostics.
 
 ## Contracts
 
@@ -203,6 +224,8 @@ See [docs/mcp.md](docs/mcp.md).
 - Unknown facts and incomplete/weak OCR stay in review; archive location or file
   timestamps never prove a contract ended.
 - Text export writes complete stored OCR/text to an explicit `0600` destination.
+  It refuses an existing destination unless `--overwrite --yes` is given after
+  confirmation, and it never rewrites a registered source original.
   Searchable-PDF derivatives with embedded text layers are a future opt-in; this
   release never rewrites signed or scanned originals.
 
@@ -213,9 +236,12 @@ See [docs/privacy.md](docs/privacy.md) and [docs/architecture.md](docs/architect
 `renamr init --legacy-config ~/.config/renamr/config.toml --config <new-bootstrap> --state-dir <state>`
 prints a preview. Add `--apply` to import inbox paths, template, language, and
 verified local model settings once. The legacy TOML and `undo.json` are left
-untouched. Cloud models, remote endpoints, and enabled compression block the
-import with actionable messages; false compression settings are ignored with a
-notice.
+untouched. Cloud models, remote endpoints, enabled compression, and unsupported
+filename templates block the import with actionable messages; false compression
+settings are ignored with a notice. Invalid settings are rejected before any
+catalog or bootstrap write. An explicit `--config` that does not exist fails
+closed instead of silently using the default state; `init --config NEW` still
+creates a new bootstrap.
 
 Legacy undo records never claim to know whether current bytes changed. They are
 previewed per item and require explicit confirmation before a new journal entry is

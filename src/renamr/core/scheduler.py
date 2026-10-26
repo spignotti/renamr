@@ -151,8 +151,8 @@ def _feature_pass(
     server = OwnedServer(endpoint=settings.endpoint, startup_timeout=15)
     try:
         server.start_if_needed()
-        inference = LocalInference.from_settings(settings, role="main")
-        info = verify_model(inference, settings.model_roles.main)
+        inference = LocalInference.from_settings(settings, role="small")
+        info = verify_model(inference, settings.model_roles.small)
         if not info.digest:
             raise InferenceError("model_digest_unavailable")
         digest = info.digest
@@ -272,9 +272,9 @@ def _collect(result: TickResult, outcome: reconcile.ScanOutcome) -> None:
 
 
 def _need_features(ws: Workspace, settings: Settings) -> bool:
-    """Return whether any catalogued revision needs a feature pass."""
+    """Return whether any catalogued revision needs a routine feature pass."""
     prefix = (
-        f"{settings.model_roles.main}|{settings.output_mode}|{processing.FEATURE_PROMPT_VERSION}|"
+        f"{settings.model_roles.small}|{settings.output_mode}|{processing.FEATURE_PROMPT_VERSION}|"
     )
     for root in roots.list_roots(ws.db):
         for location in catalog.locations_for_root(ws.db, root.root_id):
@@ -289,12 +289,12 @@ def _need_features(ws: Workspace, settings: Settings) -> bool:
 
 
 def _feature_extractor(settings: Settings, inference: LocalInference) -> FeatureExtractor:
-    """Build the main-role feature extractor."""
+    """Build the small-role routine feature extractor."""
     from renamr.core.features import LocalFeatureExtractor
 
     return LocalFeatureExtractor(
         inference,
-        settings.model_roles.main,
+        settings.model_roles.small,
         output_mode=settings.output_mode,
         max_chars=settings.feature_max_chars,
     )
@@ -367,10 +367,10 @@ def _update_state(db: Database, updates: dict[str, object]) -> None:
 
 
 def _pending_features(ws: Workspace) -> int:
-    """Count revisions whose main feature key is not current."""
+    """Count revisions whose small-role feature key is not current."""
     settings = ws.settings()
     prefix = (
-        f"{settings.model_roles.main}|{settings.output_mode}|{processing.FEATURE_PROMPT_VERSION}|"
+        f"{settings.model_roles.small}|{settings.output_mode}|{processing.FEATURE_PROMPT_VERSION}|"
     )
     count = 0
     for root in roots.list_roots(ws.db):

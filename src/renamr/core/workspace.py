@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from renamr.core.db import Database
+from renamr.core.errors import ConfigError
 from renamr.core.extract_runner import ExtractionRunner, SubprocessRunner
 from renamr.core.features import FeatureExtractor
 from renamr.core.lock import WriterLock
@@ -89,6 +90,10 @@ class Workspace:
         """Open a workspace, resolving the state directory by precedence."""
         resolved = state_dir
         if resolved is None:
+            if config_path is not None and not Path(config_path).expanduser().is_file():
+                raise ConfigError(
+                    f"explicit bootstrap config does not exist: {Path(config_path).expanduser()}"
+                )
             bootstrap_path = resolve_bootstrap_config(config_path, env)
             if bootstrap_path is not None:
                 resolved = load_bootstrap(bootstrap_path).state_dir

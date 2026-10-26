@@ -36,12 +36,22 @@ class CliError(Exception):
     """A CLI-facing error with an already sanitized message."""
 
 
-def resolve_state_dir(config_path: Path | None, state_dir: Path | None) -> Path:
+def resolve_state_dir(
+    config_path: Path | None,
+    state_dir: Path | None,
+    *,
+    allow_missing_config: bool = False,
+) -> Path:
     """Resolve the private state directory without creating it.
 
-    An explicit config must be a v2 bootstrap. An old default legacy TOML is left
-    untouched and the platform default state directory is used instead.
+    An explicit config must exist and be a v2 bootstrap; a missing or legacy
+    explicit path fails closed instead of silently using the default state. Init
+    creation passes ``allow_missing_config`` because it intentionally writes a
+    new bootstrap.
     """
+    if config_path is not None and not Path(config_path).expanduser().is_file():
+        if not allow_missing_config:
+            raise CliError(f"explicit --config does not exist: {Path(config_path).expanduser()}")
     if state_dir is not None:
         return Path(state_dir).expanduser()
     candidate = paths.resolve_bootstrap_config(config_path)
@@ -109,9 +119,11 @@ def inference_session(settings: Settings, *, role: str = "main") -> Iterator[Loc
             server.stop()
 
 
-def verify_and_key(workspace: Workspace, settings: Settings, inference: LocalInference) -> None:
-    """Verify the main local model and stamp its installed digest into the workspace."""
-    model = settings.model_roles.main
+def verify_and_key(
+    workspace: Workspace, settings: Settings, inference: LocalInference, *, role: str = "small"
+) -> None:
+    """Verify one local model role and stamp its installed digest into the workspace."""
+    model = getattr(settings.model_roles, role)
     try:
         info = verify_model(inference, model)
     except InferenceError as exc:
@@ -127,20 +139,22 @@ def verify_and_key(workspace: Workspace, settings: Settings, inference: LocalInf
     workspace.model_digest = info.digest
 
 
-def feature_extractor(settings: Settings, inference: LocalInference) -> LocalFeatureExtractor:
-    """Return the guarded feature extractor for the main role."""
+def feature_extractor(
+    settings: Settings, inference: LocalInference, *, role: str = "small"
+) -> LocalFeatureExtractor:
+    """Return the guarded feature extractor for the routine classification role."""
     return LocalFeatureExtractor(
         inference,
-        settings.model_roles.main,
+        getattr(settings.model_roles, role),
         output_mode=settings.output_mode,
         max_chars=settings.feature_max_chars,
     )
 
 
 def needs_feature_work(workspace: Workspace, root_ids: list[str], settings: Settings) -> bool:
-    """Return whether any catalogued revision still needs a feature pass."""
+    """Return whether any catalogued revision still needs a routine feature pass."""
     prefix = (
-        f"{settings.model_roles.main}|{settings.output_mode}|{processing.FEATURE_PROMPT_VERSION}|"
+        f"{settings.model_roles.small}|{settings.output_mode}|{processing.FEATURE_PROMPT_VERSION}|"
     )
     for root_id in root_ids:
         for location in catalog.locations_for_root(workspace.db, root_id):
@@ -154,8 +168,10 @@ def needs_feature_work(workspace: Workspace, root_ids: list[str], settings: Sett
     return False
 
 
-def catalog_then_features(workspace: Workspace, root_ids: list[str], settings: Settings) -> bool:
-    """Catalog pages without a model, then run features only if work exists.
+def catalog_then_features(
+    workspace: Workspace, root_ids: list[str], settings: Settings, *, role: str = "small"
+) -> bool:
+    """Catalog pages without a model, then run routine features only if work exists.
 
     Returns:
         Whether an owned model server was started for the feature pass.
@@ -164,9 +180,9 @@ def catalog_then_features(workspace: Workspace, root_ids: list[str], settings: S
         workflow.scan(workspace, root_id)
     if not needs_feature_work(workspace, root_ids, settings):
         return False
-    with inference_session(settings, role="main") as inference:
-        verify_and_key(workspace, settings, inference)
-        workspace.extractor = feature_extractor(settings, inference)
+    with inference_session(settings, role=role) as inference:
+        verify_and_key(workspace, settings, inference, role=role)
+        workspace.extractor = feature_extractor(settings, inference, role=role)
         for root_id in root_ids:
             workflow.scan(workspace, root_id)
     return True

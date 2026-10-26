@@ -6,8 +6,9 @@ SQLite catalog and are sent only to a loopback Ollama endpoint for this release.
 ## Data in the private state directory
 
 `catalog.sqlite3` intentionally contains private canonical paths, complete page
-text, extracted facts, contract evidence quotes, decisions, and operation
-history. Backups and text exports contain the same private data.
+text, extracted facts, contract evidence quotes, private contract/reference
+numbers, stable contract entity ids, decisions, and operation history. Backups and
+text exports contain the same private data.
 
 SQLite is not encrypted by default. Use FileVault or another full-disk encryption
 layer and encrypted backups. Directories this app creates are `0700`; private
@@ -36,8 +37,9 @@ only avoids adding catalog data to that sync.
 
 Sanitized logs contain opaque IDs, counts, versions, stable error categories, and
 code stack locations. They must not contain document text, filenames, real
-document paths, prompts, model responses, contract values, or credentials.
-Rotated logs retain the latest three files with owner-only permissions.
+document paths, prompts, model responses, contract values, private reference
+numbers, or credentials. Rotated logs retain the latest three files with
+owner-only permissions.
 
 `doctor --redact` avoids printing root paths. Normal local CLI/search/contract
 views may display private names and evidence deliberately; treat terminal output
@@ -47,6 +49,8 @@ and exported text as private.
 
 MCP starts with no grants. A local owner explicitly grants enumerated fields for
 one safe contract alias. Both text and structured responses use the same allowlist.
+Private contract/reference numbers and `entity_id` facts are not in that allowlist,
+so the entity bridge never exports them.
 
 > [!WARNING]
 > A cloud-hosted MCP client or model can receive every permitted response. The

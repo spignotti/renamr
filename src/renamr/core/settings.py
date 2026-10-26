@@ -21,10 +21,17 @@ from renamr.local_transport import OutputMode, normalize_model_name, validate_en
 SETTINGS_KEY = "app"
 LEGACY_MIGRATION_KEY = "legacy_migration"
 DEFAULT_ENDPOINT = "http://127.0.0.1:11434"
+ROUTINE_ROLE = "small"
+DIALOG_ROLE = "maintenance"
 
 
 class ModelRoles(BaseModel):
-    """Independently configurable model roles; all local."""
+    """Independently configurable local model roles.
+
+    Routine document classification uses ``small``. Rule and structure dialog
+    uses ``maintenance``. ``main`` remains a legacy alias for explicit benchmark
+    runs and custom callers; it is not used by routine routing.
+    """
 
     model_config = ConfigDict(extra="forbid")
 

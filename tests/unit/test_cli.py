@@ -268,6 +268,7 @@ def test_onboard_registers_sibling_roots_without_inference(tmp_path: Path) -> No
             "--archive",
             str(tmp_path / "Archive"),
             "--no-questions",
+            "--no-features",
             "--config",
             str(config),
         ],

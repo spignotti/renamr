@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from renamr.core import catalog, folders, mutation, operations, roots, rules
+from renamr.core import catalog, contracts, folders, mutation, operations, roots, rules
 from renamr.core.db import Database
 from renamr.core.errors import CoreError, RuleError
 from renamr.core.journal import FaultInjector
@@ -210,6 +210,12 @@ def apply_structure(
                 blocked=result.blocked,
                 failed=result.failed,
             )
+        contracts.remap_members(
+            ws.db,
+            plan.root_id,
+            [(item.source, item.target) for item in plan.draft.mappings],
+        )
+        contracts.reconcile_members(ws.db)
         updated = _apply_rule_update(ws.db, plan.draft.rule_update)
         _set_plan_state(ws.db, plan_id, "applied")
         return StructureApplyResult(

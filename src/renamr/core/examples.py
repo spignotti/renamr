@@ -23,6 +23,7 @@ from renamr.core.errors import CatalogError
 from renamr.core.ids import new_id
 
 _REVIEW_KIND = "possible_move"
+_PATH_MISSING = "path_missing"
 
 
 class ExampleSource(StrEnum):
@@ -30,6 +31,8 @@ class ExampleSource(StrEnum):
 
     USER_LABEL = "user_label"
     USER_CORRECTION = "user_correction"
+    USER_DESTINATION = "user_destination"
+    TRUSTED_PLACEMENT = "trusted_placement"
     MANUAL_MOVE = "manual_move"
     NEGATIVE = "negative"
 
@@ -127,7 +130,7 @@ def observe_manual_moves(db: Database) -> list[ManualMoveObservation]:
     """Record verdicts for every open possible-move review without confirming any."""
     observations: list[ManualMoveObservation] = []
     for review in catalog.open_review_items(db):
-        if str(review.get("kind")) != _REVIEW_KIND:
+        if str(review.get("kind")) not in (_REVIEW_KIND, _PATH_MISSING):
             continue
         location_id = review.get("location_id")
         revision_id = review.get("revision_id")

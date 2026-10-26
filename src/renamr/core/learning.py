@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict
 from renamr.benchmark_schema import RulePredicate
 from renamr.core import catalog, examples, roots, rules
 from renamr.core.db import Database
+from renamr.core.errors import CoreError
 from renamr.core.roots import Root
 
 _DEFAULT_TEMPLATE = "{date}_{subject}"
@@ -76,7 +77,13 @@ def propose_candidates(db: Database, *, limit: int = _MAX_CANDIDATES) -> list[Ru
 
 
 def create_draft_from_candidate(db: Database, candidate: RuleCandidate) -> rules.Rule:
-    """Persist one candidate as a draft rule; never activate it."""
+    """Persist one candidate as a draft rule; never activate it.
+
+    Raises:
+        PathBoundaryError: If the candidate target is not an explicitly allowed
+            destination for its inbox scope.
+    """
+    roots.require_allowed_target(db, candidate.scope_root_id, candidate.target_root_id)
     return rules.create_rule_draft(
         db,
         scope_root_id=candidate.scope_root_id,
@@ -88,8 +95,52 @@ def create_draft_from_candidate(db: Database, candidate: RuleCandidate) -> rules
     )
 
 
+def ensure_drafts_from_examples(db: Database, *, minimum_positives: int = 2) -> list[rules.Rule]:
+    """Create testable drafts once repeated consistent placements exist.
+
+    Drafts never activate themselves. Conflicting placements or a single example
+    create nothing, and an equivalent existing rule revision is reused.
+    """
+    created: list[rules.Rule] = []
+    for candidate in propose_candidates(db):
+        if candidate.impact.conflicts or candidate.impact.positive_examples < minimum_positives:
+            continue
+        if _equivalent_rule_exists(db, candidate):
+            continue
+        created.append(create_draft_from_candidate(db, candidate))
+    return created
+
+
+def _equivalent_rule_exists(db: Database, candidate: RuleCandidate) -> bool:
+    """Return whether the candidate's bounded rule already exists."""
+    wanted = [
+        (predicate.field, predicate.operator, tuple(predicate.values))
+        for predicate in candidate.predicates
+    ]
+    for current in rules.list_rules(db):
+        existing = [
+            (predicate.field, predicate.operator, tuple(predicate.values))
+            for predicate in current.predicates
+        ]
+        if (
+            current.scope_root_id == candidate.scope_root_id
+            and current.target_root_id == candidate.target_root_id
+            and current.target_subdir == candidate.target_subdir
+            and current.filename_template == candidate.filename_template
+            and existing == wanted
+        ):
+            return True
+    return False
+
+
 def evaluate(db: Database, candidate: RuleCandidate) -> RuleImpact:
-    """Evaluate a candidate against catalog, examples, and active rules."""
+    """Evaluate a candidate against catalog, examples, and active rules.
+
+    A confirmed positive counts only when its scope and exact destination folder
+    agree with the candidate. Matching examples that point at another root or a
+    different folder inside the same root are counterexamples, so test and
+    activation never present a broad rule as safe.
+    """
     rule = rules.Rule(
         rule_id=candidate.example_ids[0] if candidate.example_ids else "candidate",
         revision=1,
@@ -109,11 +160,22 @@ def evaluate(db: Database, candidate: RuleCandidate) -> RuleImpact:
         if example.source == str(examples.ExampleSource.NEGATIVE):
             impact.negative_examples += 1
             continue
+        placement = _placement(db, example)
+        if placement is None:
+            continue
+        scope_root_id, target_root_id, target_subdir = placement
+        if (scope_root_id, target_root_id, target_subdir) != (
+            candidate.scope_root_id,
+            candidate.target_root_id,
+            candidate.target_subdir,
+        ):
+            impact.conflicts += 1
+            continue
         impact.positive_examples += 1
         decision = rules.select_rule(
             active,
             scope_root_id=candidate.scope_root_id,
-            relative_path="example",
+            relative_path=_relative_path(example),
             facts=features,
         )
         if decision.state == "conflict" or (
@@ -121,6 +183,12 @@ def evaluate(db: Database, candidate: RuleCandidate) -> RuleImpact:
         ):
             impact.conflicts += 1
     return impact
+
+
+def _relative_path(example: examples.Example) -> str:
+    """Return a synthetic scope-relative path for example routing checks."""
+    value = _payload(example, "new_path") or _payload(example, "old_path")
+    return "" if value is None else Path(value).name
 
 
 def active_rule_fingerprint(db: Database) -> str:
@@ -132,6 +200,42 @@ def active_rule_fingerprint(db: Database) -> str:
     return "|".join(parts)
 
 
+def _placement(db: Database, example: examples.Example) -> tuple[str, str, str] | None:
+    """Return (scope root, target root, target subdir) for one example."""
+    target_path = _payload(example, "new_path")
+    payload_target = _payload(example, "target_root_id")
+    if target_path is not None:
+        target_root = roots.containing_root(db, Path(target_path))
+        if target_root is None:
+            return None
+        if payload_target is not None and target_root.root_id != payload_target:
+            return None
+    elif payload_target is not None:
+        try:
+            target_root = roots.get_root(db, payload_target)
+        except CoreError:
+            return None
+    else:
+        return None
+    payload_scope = _payload(example, "scope_root_id")
+    if payload_scope is not None:
+        try:
+            scope = roots.get_root(db, payload_scope)
+        except CoreError:
+            return None
+    else:
+        old_path = _payload(example, "old_path")
+        if old_path is not None:
+            scope = roots.containing_root(db, Path(old_path))
+        else:
+            location = _location(db, example)
+            scope = None if location is None else roots.get_root(db, location.root_id)
+    if scope is None:
+        return None
+    subdir = _target_subdir(target_root, Path(target_path) if target_path else None)
+    return scope.root_id, target_root.root_id, subdir
+
+
 def _destination(db: Database, example: examples.Example) -> tuple[str, str, str, str] | None:
     """Return (scope root, target root, subdir, document type) for one example."""
     document_type = _payload(example, "document_type") or _revision_field(
@@ -139,33 +243,34 @@ def _destination(db: Database, example: examples.Example) -> tuple[str, str, str
     )
     if not document_type:
         return None
-    target_path = _payload(example, "new_path")
-    if not target_path:
+    placement = _placement(db, example)
+    if placement is None:
         return None
-    target_root = roots.containing_root(db, Path(target_path))
-    if target_root is None:
-        return None
-    old_path = _payload(example, "old_path")
-    if old_path:
-        scope = roots.containing_root(db, Path(old_path))
-    else:
-        location = _location(db, example)
-        scope = None if location is None else roots.get_root(db, location.root_id)
-    if scope is None:
-        return None
-    subdir = _relative_parent(target_root, Path(target_path))
-    return scope.root_id, target_root.root_id, subdir, document_type
+    scope_root_id, target_root_id, subdir = placement
+    return scope_root_id, target_root_id, subdir, document_type
 
 
 def _predicates(members: list[examples.Example], document_type: str) -> list[RulePredicate]:
     """Use document type plus one stable second field when it is shared."""
     predicates = [RulePredicate(field="document_type", operator="equals", values=[document_type])]
-    for field in ("issuer", "language"):
+    for field in ("issuer", "entity_id", "language"):
         values = [value for item in members if (value := _payload(item, field))]
         if len(set(values)) == 1:
             predicates.append(RulePredicate(field=field, operator="equals", values=[values[0]]))
             break
     return predicates
+
+
+def _target_subdir(root: Root, path: Path | None) -> str:
+    """Return a path's parent relative to a root."""
+    if path is None:
+        return ""
+    try:
+        relative = path.relative_to(root.canonical_path)
+    except ValueError:
+        return ""
+    parent = relative.parent.as_posix()
+    return "" if parent == "." else parent
 
 
 def _example_features(db: Database, example: examples.Example) -> dict[str, list[str]]:
@@ -218,13 +323,3 @@ def _location(db: Database, example: examples.Example) -> catalog.LocationRecord
         return catalog.get_location(db, example.location_id)
     except catalog.CatalogError:
         return None
-
-
-def _relative_parent(root: Root, path: Path) -> str:
-    """Return a path's parent relative to a root."""
-    try:
-        relative = path.relative_to(root.canonical_path)
-    except ValueError:
-        return ""
-    parent = relative.parent.as_posix()
-    return "" if parent == "." else parent

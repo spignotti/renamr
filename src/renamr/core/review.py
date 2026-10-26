@@ -124,8 +124,24 @@ def resolve_manual_move(db: Database, review_id: str, *, accept: bool) -> exampl
     if observation.status != "candidate":
         raise CatalogError("this move is not a unique confirmed candidate")
     example = examples.confirm_manual_move(db, observation.observation_id)
+    _remap_contract_member(db, observation)
     _resolve(db, review_id)
     return example
+
+
+def _remap_contract_member(db: Database, observation: examples.ManualMoveObservation) -> None:
+    """Keep a stable contract membership when the moved path is a member."""
+    from renamr.core import contracts, roots
+
+    target_root = roots.containing_root(db, observation.new_path)
+    if target_root is not None:
+        contracts.remap_moved_path(
+            db,
+            old_path=observation.old_path,
+            new_path=observation.new_path,
+            target_root_id=target_root.root_id,
+        )
+    contracts.reconcile_members(db)
 
 
 def resolve_naming(db: Database, review_id: str, *, template: str) -> rules.Rule:
@@ -160,6 +176,11 @@ def dismiss_review(db: Database, review_id: str, *, note: str = "") -> None:
 
 def _question(kind: str, detail: str) -> str:
     """Return a focused question for a review kind."""
+    if kind == "unmatched_placement":
+        return (
+            "No active rule routes this readable document. Choose an explicit target root and "
+            "folder to move it there, or leave it in place."
+        )
     if kind in (
         "features_unresolved",
         "feature_blocked",

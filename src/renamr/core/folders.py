@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from renamr.core.db import Database
 from renamr.core.errors import RootError
-from renamr.core.roots import Root, get_root
+from renamr.core.roots import Root, get_root, resolve_subpath
 from renamr.core.settings import validate_filename_template
 
 
@@ -34,11 +34,17 @@ class FolderOverride(BaseModel):
     target_subdir: str | None = None
 
 
-def discover_folders(root: Root, *, limit: int = 200) -> list[str]:
-    """Return immediate non-hidden child directories as relative POSIX paths."""
+def discover_folders(root: Root, *, relative_path: str = "", limit: int = 200) -> list[str]:
+    """Return immediate non-hidden child directories as root-relative POSIX paths.
+
+    ``relative_path`` selects a validated base folder inside the root; the
+    default empty value keeps the historical root-level behavior.
+    """
+    base = validate_relative_path(relative_path)
+    directory = resolve_subpath(root, base)
     found: list[str] = []
     try:
-        entries = sorted(os.scandir(root.canonical_path), key=lambda item: item.name)
+        entries = sorted(os.scandir(directory), key=lambda item: item.name)
     except OSError:
         return found
     for entry in entries:
@@ -46,7 +52,7 @@ def discover_folders(root: Root, *, limit: int = 200) -> list[str]:
             break
         if entry.name.startswith(".") or not entry.is_dir(follow_symlinks=False):
             continue
-        found.append(entry.name)
+        found.append(f"{base}/{entry.name}" if base else entry.name)
     return found
 
 

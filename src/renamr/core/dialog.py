@@ -8,7 +8,6 @@ and decisions are persisted, never the raw conversation.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 from collections.abc import Sequence
@@ -20,6 +19,8 @@ from renamr.benchmark_schema import DocumentType, RuleDraft
 from renamr.core import catalog, examples, folders, roots, rules, settings, structure
 from renamr.core.dates import parse_document_date
 from renamr.core.db import Database
+from renamr.core.dialog_context import MAX_CONTEXT_CHARS, bounded_history, build_context
+from renamr.core.dialog_state import state_fingerprint
 from renamr.core.errors import CoreError, RuleError
 from renamr.core.facts import FactRecord, set_facts
 from renamr.core.ids import new_id
@@ -72,7 +73,6 @@ _SETTING_FIELDS: frozenset[str] = frozenset(
         "service_max_pages",
     }
 )
-_MAX_CONTEXT_CHARS = 8000
 
 
 class LabelDraft(BaseModel):
@@ -161,17 +161,26 @@ def propose(
     root_ids: list[str],
     output_mode: OutputMode = "validated_prompt",
     keep_alive: str | None = None,
+    history: Sequence[str] | None = None,
+    max_context_chars: int = MAX_CONTEXT_CHARS,
 ) -> DialogProposal:
-    """Ask the local model for one bounded proposal and persist it unapplied."""
+    """Ask the local model for one bounded proposal and persist it unapplied.
+
+    ``history`` is an ephemeral, caller-owned list of concise turn summaries. It
+    is bounded for this request and never persisted as raw conversation.
+    """
     if not message.strip():
         raise CoreError("dialog message is empty")
-    context = build_context(db, root_ids=root_ids)
+    context = build_context(db, root_ids=root_ids, max_chars=max_context_chars)
+    history_text = bounded_history(history)
+    user_content = (
+        f"Local context:\n{context}\n\n"
+        f"Recent ephemeral turns:\n{history_text or '-'}\n\n"
+        f"Request:\n{clean_text(message, limit=800)}"
+    )
     messages = [
         ChatMessage(role="system", content=DIALOG_PROMPT),
-        ChatMessage(
-            role="user",
-            content=f"Local context:\n{context}\n\nRequest:\n{clean_text(message, limit=800)}",
-        ),
+        ChatMessage(role="user", content=user_content),
     ]
     result = completer.complete(
         model,
@@ -181,15 +190,18 @@ def propose(
         keep_alive=keep_alive,
     )
     response = result.data
-    _validate_response(db, response)
-    return _persist_proposal(db, response)
+    validate_response(db, response)
+    return _persist_proposal(db, response, scope_root_ids=root_ids)
 
 
-def _persist_proposal(db: Database, response: DialogResponse) -> DialogProposal:
+def _persist_proposal(
+    db: Database, response: DialogResponse, *, scope_root_ids: list[str]
+) -> DialogProposal:
     """Persist a validated response and its stale-check fingerprint."""
     payload = {
         "response": response.model_dump(mode="json"),
-        "base_fingerprint": _fingerprint(db),
+        "scope_root_ids": list(scope_root_ids),
+        "base_fingerprint": state_fingerprint(db, scope_root_ids),
     }
     proposal = DialogProposal(
         proposal_id=new_id("proposal"),
@@ -235,53 +247,17 @@ def apply_proposal(
     proposal = _get_proposal(db, proposal_id)
     if proposal.status != "proposed":
         raise CoreError("proposal was already decided")
-    if proposal.payload.get("base_fingerprint") != _fingerprint(db):
+    scope_root_ids = _scope_root_ids(proposal)
+    if proposal.payload.get("base_fingerprint") != state_fingerprint(db, scope_root_ids):
         _decide(db, proposal_id, "stale", "context_changed")
-        raise CoreError("proposal is stale; the rules or settings changed")
+        raise CoreError("proposal is stale; facts, files, roots, folders, or rules changed")
     response = DialogResponse.model_validate(proposal.payload["response"])
     outcome = _apply_response(db, response)
     _decide(db, proposal_id, "applied", decision or "confirmed")
     return outcome
 
 
-def build_context(db: Database, *, root_ids: list[str]) -> str:
-    """Build a bounded local context from selected roots, rules, and examples.
-
-    Raises:
-        RootError: If a selected root id is unknown.
-    """
-    lines: list[str] = ["Roots:"]
-    for root_id in root_ids:
-        root = roots.get_root(db, root_id)
-        label = root.alias or root.description or root.role
-        lines.append(f"- id={root.root_id} role={root.role} label={clean_text(label, limit=80)}")
-        for override in folders.list_folder_overrides(db, root.root_id)[:10]:
-            lines.append(
-                f"  folder={clean_text(override.relative_path, limit=80)} "
-                f"label={clean_text(override.alias or override.description, limit=80)}"
-            )
-    lines.append("Active rules:")
-    for rule in rules.active_rules(db)[:20]:
-        predicates = ",".join(f"{item.field}={','.join(item.values)}" for item in rule.predicates)
-        lines.append(
-            f"- id={rule.rule_id} revision={rule.revision} scope={rule.scope_root_id} "
-            f"subtree={clean_text(rule.scope_subtree, limit=60)} target={rule.target_root_id}/"
-            f"{clean_text(rule.target_subdir, limit=60)} template={rule.filename_template} "
-            f"priority={rule.priority} predicates={clean_text(predicates, limit=200)}"
-        )
-    lines.append("Confirmed examples:")
-    for example in examples.list_examples(db)[-20:]:
-        values = " ".join(
-            f"{key}={clean_text(str(value), limit=60)}"
-            for key, value in example.payload.items()
-            if key in ("document_type", "issuer", "language", "new_path")
-        )
-        lines.append(f"- source={example.source} {values}")
-    text = "\n".join(lines)
-    return text[:_MAX_CONTEXT_CHARS]
-
-
-def _validate_response(db: Database, response: DialogResponse) -> None:
+def validate_response(db: Database, response: DialogResponse) -> None:
     """Validate every id, path, and field in a model response."""
     if response.intent == "propose_rule":
         draft = response.rule
@@ -445,16 +421,6 @@ def _unsafe_label(value: str) -> bool:
     )
 
 
-def _fingerprint(db: Database) -> str:
-    """Return a stable fingerprint of rules and settings for stale checks."""
-    material = {
-        "settings": json.loads(settings.load_settings(db).model_dump_json()),
-        "rules": [[rule.rule_id, rule.revision, str(rule.status)] for rule in rules.list_rules(db)],
-    }
-    encoded = json.dumps(material, sort_keys=True, default=str).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def _get_proposal(db: Database, proposal_id: str) -> DialogProposal:
     """Return one proposal or raise."""
     with db.read() as connection:
@@ -464,6 +430,19 @@ def _get_proposal(db: Database, proposal_id: str) -> DialogProposal:
     if row is None:
         raise CoreError("unknown proposal")
     return _row_to_proposal(row)
+
+
+def get_proposal(db: Database, proposal_id: str) -> DialogProposal:
+    """Return one persisted proposal for local display."""
+    return _get_proposal(db, proposal_id)
+
+
+def _scope_root_ids(proposal: DialogProposal) -> list[str]:
+    """Return the selected root ids stored with a proposal."""
+    value = proposal.payload.get("scope_root_ids")
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
 
 
 def _row_to_proposal(row: sqlite3.Row) -> DialogProposal:

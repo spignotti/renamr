@@ -93,17 +93,41 @@ def document_text(db: Database, revision_id: str) -> str:
     return header + "\n\n".join(blocks)
 
 
-def export_text(db: Database, revision_id: str, destination: Path) -> Path:
+def export_text(
+    db: Database, revision_id: str, destination: Path, *, overwrite: bool = False
+) -> Path:
     """Write a revision's text to an explicit private UTF-8 file.
+
+    An existing unrelated destination is refused unless ``overwrite`` is true,
+    and a registered source original is never rewritten.
 
     Args:
         db: Open catalog database.
         revision_id: Revision to export.
         destination: Explicit output path (created privately, ``0600``).
+        overwrite: Allow replacing an existing non-source file after confirmation.
 
     Returns:
         The destination path.
+
+    Raises:
+        CatalogError: If the destination is a registered source original.
+        StateError: If an occupied destination is not overwriteable.
     """
+    target = Path(destination).expanduser()
+    resolved = target.resolve()
+    with db.read() as connection:
+        source = connection.execute(
+            "SELECT 1 FROM locations WHERE canonical_path = ? LIMIT 1", (str(resolved),)
+        ).fetchone()
+    if source is not None:
+        raise CatalogError("refusing to rewrite a registered source original as text export")
+    if target.exists() and not overwrite:
+        raise CatalogError(
+            "export destination already exists; choose a new path or use --overwrite"
+        )
     text = document_text(db, revision_id)
-    write_private_file(Path(destination), text.encode("utf-8"), require_private_parent=False)
-    return Path(destination)
+    write_private_file(
+        target, text.encode("utf-8"), require_private_parent=False, overwrite=overwrite
+    )
+    return target

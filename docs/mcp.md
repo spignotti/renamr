@@ -41,6 +41,9 @@ Allowed fields: `provider`, `contract_type`, `start_date`,
 `cancellation_confirmed`, `cost_amount`, `cost_currency`, `cost_interval`,
 `status`, `minimum_end_date`, `notice_deadline`.
 
+Private contract/reference numbers and the derived `entity_id` are local routing
+inputs only; they are intentionally absent from this allowlist.
+
 Unknown or conflicting facts may return only their verification state without a
 value. Permission changes are read from SQLite on every request; revocation takes
 effect on the next request without restarting the server.
