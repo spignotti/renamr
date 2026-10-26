@@ -31,6 +31,11 @@ DocumentType = Literal[
     "cancellation confirmation",
     "certificate",
     "notice",
+    "payslip",
+    "application",
+    "enrolment certificate",
+    "medical correspondence",
+    "official correspondence",
     "unknown",
 ]
 
@@ -41,7 +46,14 @@ Return one JSON object matching the provided schema and nothing else.
 Fields:
 - document_type: one of invoice, receipt, bank statement, insurance policy,
   employment contract, tenancy agreement, payment reminder, contract,
-  contract amendment, cancellation confirmation, certificate, notice, unknown.
+  contract amendment, cancellation confirmation, certificate, notice, payslip,
+  application, enrolment certificate, medical correspondence,
+  official correspondence, unknown. A payslip (German "Gehaltsabrechnung",
+  "Lohnabrechnung") is not a receipt. An application (German "Antrag",
+  "Bewerbung") is not a notice. An enrolment certificate (German
+  "Immatrikulationsbescheinigung", "Schulbescheinigung") is not a generic
+  certificate. Medical correspondence (doctor/insurance letters) and official
+  correspondence (authority letters) are their own types.
 - issuer: the issuing organization or person, or null.
 - date: the document's own issue date as YYYY-MM-DD, or null. Never use a
   contract start, payment due, or period end date as the issue date.
