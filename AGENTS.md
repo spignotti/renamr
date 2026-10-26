@@ -1,13 +1,16 @@
 # Renamr
 
 ## Overview
-Python CLI that renames local files from AI-extracted metadata.
+Local-first Python CLI: catalog documents on ordinary filesystems, propose
+cautious routing/renaming, learn from confirmed decisions, and share a tiny
+read-only contract fact surface over stdio MCP.
 
 ## Delivery Profile
 
 `published` — public, publishable, reviewable.
 
-Git policy: `feature-pr` — always work on a feature branch, never directly on `main`.
+Git policy: `feature-pr` — always work on a feature branch, never directly on
+`main`.
 
 - conventional commits, PR flow, squash merge in GitHub UI
 - keep README, packaging metadata, and release hygiene public-facing and intentional
@@ -16,18 +19,28 @@ Git policy: `feature-pr` — always work on a feature branch, never directly on 
 ## Tech Stack
 - Language: Python 3.12+
 - Framework: Typer
-- Dependencies: LiteLLM, Pydantic, PyPDF, PyMuPDF, Pillow, Structlog
-- Database: none
+- Dependencies: MCP SDK, Pydantic, PyMuPDF, Pillow, RapidOCR, Structlog
+- Database: SQLite (standard library), owned by the app in a private state dir
+- Inference: local Ollama only, loopback endpoint, verified installed models
 
 ## Directory Structure
 ```text
 src/
 ├── renamr/           # Package source
+│   ├── cli/          # Typer registrar and focused command modules
+│   ├── core/         # Catalog, extraction, rules, journal, contracts, service, MCP
+│   ├── mcp_server.py
+│   └── service_worker.py
 tests/
-├── unit/             # Fast isolated tests
+├── unit/             # Fast isolated tests, synthetic fixtures
 ├── integration/      # Package-level smoke tests
 docs/
-├── decisions/        # Architecture notes if needed later
+├── decisions/        # Accepted and superseded architecture decisions
+├── architecture.md
+├── migration-v1-v2.md
+├── privacy.md
+├── service.md
+├── mcp.md
 ```
 
 ## Validation
@@ -37,6 +50,8 @@ docs/
 - `nox -s lint typecheck` - structural changes (new modules, imports, type signatures)
 - `nox -s lint typecheck test` - logic or behavior changes
 - `nox -s ci` - CI-equivalent local check
+- `nox -s security` - dependency audit and broad `S` rules (advisory baseline may
+  include test-only `S101`; fix real security causes, do not weaken configs)
 
 ## Code Quality
 
@@ -66,32 +81,37 @@ Use Google-style docstrings for public modules, functions, and classes.
 - Type aliases: PascalCase
 
 ## Conventions
-- Keep the implementation simple and sync-first.
-- Keep config flat and explicit.
+- Keep the implementation simple and sync-first; async only where the MCP SDK requires it.
+- Keep settings flat and explicit.
 - Prefer small focused helpers over framework-style abstractions.
+- No `type: ignore`, `noqa`, or relaxed lint/type/security configuration.
 
 ## Library Documentation
 
-Context7 MCP is available in this project. When working with external libraries, prefer
-version-specific docs from Context7 instead of relying on memory.
+Context7 MCP is available in this project. When working with external libraries,
+prefer version-specific docs from Context7 instead of relying on memory.
 
 ## Architecture Decisions
-- Use src/ layout for packaging.
+- Use `src/` layout for packaging.
 - Use Typer for the CLI surface.
-- Use LiteLLM so provider changes stay config-only.
-- Keep preview extraction, metadata parsing, file operations, and CLI wiring in separate modules.
+- SQLite owns settings, roots, catalog, rules, decisions, contracts, journalled
+  runs, and MCP grants. Bootstrap TOML only locates private state.
+- Local Ollama only: no LiteLLM, cloud providers, remote endpoints, model downloads,
+  PDF compression, web UI, vector search, agent tools, or automatic delete/dedup.
+- All filesystem mutation goes through preview/journal/apply/recovery and the
+  cross-process writer lock; originals stay byte-identical.
+- MCP is stdio-only, read-only, default-deny, per-alias/per-field enumerated.
 
 ## Known Constraints
-- File contents are sent to an external LLM provider; README must keep that explicit.
-- Runtime data lives under `data/` and should stay out of versioned outputs.
-- Undo support only covers the most recent successful rename run.
-
-## Project Contract
-
-Status: active
-Manifest: TECHNICAL_CONTRACT.md
-Activation reason: production
-Opt-out reason: none
+- SQLite is not encrypted by default; explain FileVault and encrypted backups.
+- Document folders may still be synchronized by iCloud or another provider.
+- Extended attributes are copied where supported; unsupported ACLs block a
+  cross-volume move and leave the source intact.
+- Undo reverses committed journal entries; legacy `undo.json` needs explicit
+  per-item confirmation.
+- Contract facts are evidence-backed but are not legal advice.
+- MCP permitted responses can reach cloud-hosted clients; the interface cannot
+  protect a client that already has shell/filesystem access.
 
 ## GitHub Issues
 

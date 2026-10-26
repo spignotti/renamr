@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project adheres to Semantic Versioning.
 
+## [2.0.0] - 2026-10-26
+
+### Breaking changes
+
+- Local inference only: cloud providers, remote endpoints, LiteLLM, and the
+  external-provider API-key workflow are removed.
+- SQLite owns active settings, roots, rules, decisions, contracts, and operation
+  history; bootstrap TOML only locates the private state directory.
+- Preview is the default. Files change only with `run --apply`, an explicit
+  structure apply, undo, or an explicitly installed automation tick.
+- PDF compression is rejected because originals stay byte-identical.
+- Rule grammar is frozen to bounded predicates, targets, and filename templates.
+- Default private state moves outside document trees and legacy `undo.json` is
+  no longer executed automatically.
+
+### Added
+
+- Full page/OCR catalog with true quality, page provenance, incremental caching,
+  local full-text search, and explicit text export.
+- Journaled no-overwrite mutation, cross-process writer lock, crash recovery,
+  conflict-safe undo, and metadata preservation with fail-closed ACL handling.
+- Onboarding, folder descriptions/aliases, focused review, one-off labels,
+  conservative manual-move examples, deterministic rule drafts, test/activate/
+  rollback/maintain lifecycle.
+- Five-intent local dialog whose proposals require terminal confirmation and
+  reject unknown ids, unsafe paths, and stale context.
+- Revisioned structure plans that preserve folders, leave hidden/unplanned files,
+  and update rules only after file operations succeed.
+- Source-backed contract grouping with explicit/calculated/user-confirmed/
+  unknown/conflicting origins and supported deterministic calculations.
+- Bounded macOS LaunchAgent reconciliation with budgets, pause/resume/status,
+  sanitized rotating logs, and own-job-only removal.
+- Read-only stdio MCP SDK integration with default deny, safe aliases, enumerated
+  fields, normalized values, and immediate revocation.
+- v1 migration preview/apply that leaves source TOML and legacy undo untouched.
+
+### Changed
+
+- CLI is a small Typer registrar with focused command modules and readable help.
+- Model roles (`main`, `small`, `maintenance`) and keep-alive are configurable;
+  the verified installed model digest keys feature caches.
+- Diagnostics are sanitized, private, and rotated; the MCP boundary is separate
+  from the private local CLI evidence surface.
+
+### Removed
+
+- LiteLLM, pypdf, cloud/OpenRouter settings, vision-provider fallback, PDF
+  compression, iCloud download side effects, the old rename pipeline, and the
+  obsolete technical-contract/project/feature documents.
+
 ## [1.4.1] - 2026-10-13
 
 

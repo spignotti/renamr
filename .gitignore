@@ -36,9 +36,20 @@ htmlcov/
 # Herdr
 .herdr/
 
-# Runtime data
+# Runtime data and private local state
 config.toml
-data/undo.json
+data/
+renamr-state/
+catalog.sqlite3
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+backups/
+exports/
+logs/
+*.log
+.env.*
+fixtures/private/
 
 # Project memory (never commit)
 .opencode/project-memory.sqlite3
