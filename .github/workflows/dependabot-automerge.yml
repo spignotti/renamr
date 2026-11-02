@@ -1,0 +1,68 @@
+# Dependabot auto-merge, 4-week trial (pm point 250; Silas, 2026-11-02). The trial ends 4 weeks
+# after this file lands on main (around 2026-11-30); then keep it or delete it by decision.
+# Only Dependabot patch/minor version updates get auto-merge (squash); majors never. GitHub's
+# auto-merge then waits for the required status checks on main, so nothing merges before CI is green.
+# Not auto-merged:
+#   github_actions: these PRs edit .github/workflows/*, which GITHUB_TOKEN may not merge.
+#   docker minor: a minor tag can move the language runtime (e.g. python 3.13 -> 3.14).
+name: dependabot-automerge
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+permissions:
+  contents: read
+concurrency:
+  group: dependabot-automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  meta:
+    # Only PRs opened by Dependabot and pushed by Dependabot (a human push to the branch skips this).
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      eligible: ${{ steps.e.outputs.eligible }}
+    steps:
+      - id: m
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      - id: e
+        env:
+          ECO: ${{ steps.m.outputs.package-ecosystem }}
+          UT: ${{ steps.m.outputs.update-type }}
+        run: |
+          set -euo pipefail
+          case "$ECO:$UT" in
+            github_actions:*) eligible=false ;;
+            docker:version-update:semver-patch) eligible=true ;;
+            docker:*) eligible=false ;;
+            *:version-update:semver-patch|*:version-update:semver-minor) eligible=true ;;
+            *) eligible=false ;;
+          esac
+          echo "ecosystem=$ECO update-type=$UT eligible=$eligible"
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+  enable:
+    needs: [meta]
+    if: ${{ !cancelled() && needs.meta.outputs.eligible == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Enable auto-merge (squash)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -uo pipefail
+          if out="$(gh pr merge --auto --squash "$PR_URL" 2>&1)"; then echo "$out"; exit 0; fi
+          echo "$out"
+          # Repo setting "Allow auto-merge" still off: warn instead of a red check on the PR.
+          if printf '%s' "$out" | grep -qi 'auto.\?merge is not allowed'; then
+            echo "::warning::Allow auto-merge is off in the repo settings; merge this PR by hand."
+            exit 0
+          fi
+          exit 1
