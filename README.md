@@ -5,6 +5,8 @@
 [![PyPI](https://img.shields.io/pypi/v/renamr.svg)](https://pypi.org/project/renamr/)
 [![CI](https://github.com/spignotti/renamr/actions/workflows/ci.yml/badge.svg)](https://github.com/spignotti/renamr/actions/workflows/ci.yml)
 
+> **Legacy / no longer maintained.** renamr is kept public for reference only. It receives no further updates, dependency bumps or support, and no new releases are published.
+
 AI-powered CLI that renames files based on their content.
 
 ## What it does
