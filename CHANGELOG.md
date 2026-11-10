@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on Keep a Changelog,
 and this project adheres to Semantic Versioning.
 
+## [1.4.2] - 2026-11-10
+
+### Fixed
+
+- **deps:** Update vulnerable dependencies (pypdf 6.21.4, Pillow 13, aiohttp, msgpack, virtualenv, certifi, litellm, filelock)
+
+
 ## [1.4.1] - 2026-10-13
 
 
