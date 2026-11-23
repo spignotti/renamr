@@ -10,7 +10,7 @@ Python 3.12+, Typer, LiteLLM, Pydantic, PyPDF, PyMuPDF, Pillow, Structlog. `src/
 - Docs, config, comment-only: `nox -s lint`. Structural changes: `nox -s lint typecheck`. Logic or behaviour: `nox -s lint typecheck test`. CI-equivalent: `nox -s ci`.
 
 ## Rules
-- Always a feature branch, never directly on `main`. Conventional commits, PR, squash merge.
+- Squash merge.
 - Limits: files 500 lines, functions 50, classes 100, line length 100.
 - Complete type hints on new functions; Google-style docstrings for public modules, functions and classes.
 - Raise specific exceptions, validate inputs early, keep messages descriptive, use context managers for files and external resources.
