@@ -3,7 +3,6 @@
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 [![PyPI](https://img.shields.io/pypi/v/renamr.svg)](https://pypi.org/project/renamr/)
-[![CI](https://github.com/spignotti/renamr/actions/workflows/ci.yml/badge.svg)](https://github.com/spignotti/renamr/actions/workflows/ci.yml)
 
 AI-powered CLI that renames files based on their content.
 
